@@ -11,32 +11,16 @@ re-train, then predict
 
 """
 
-import sys
 import numpy as np
-from sklearn.model_selection import train_test_split
 import pandas as pd
 import copy
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.metrics import mean_pinball_loss, mean_squared_error
 import os
 import rasterio as rio
-from rasterio.transform import from_origin
-from sklearn.metrics import make_scorer, mean_squared_error, explained_variance_score, r2_score
-from sklearn.model_selection import GridSearchCV
-import rasterio as rio
-from rasterio.warp import reproject, Resampling
-import geopandas as gpd
 import glob
-from pyproj import Transformer
 from shapely.ops import transform
-from sklearn.model_selection import cross_val_score
-from osgeo import gdal
-from scipy.stats import spearmanr
 from sklearn.model_selection import KFold
-from sklearn.metrics import mean_absolute_error
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
-from sklearn.ensemble import GradientBoostingClassifier
 import lightgbm as lgb
 from rasterio.windows import Window
 
