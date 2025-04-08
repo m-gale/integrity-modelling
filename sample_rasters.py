@@ -19,18 +19,21 @@ import copy
 #%%
 
 wdir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\'
-obs_path=wdir+'scrap\\pts_updated_500m_v11_1kmspacing_20volexp.shp'
-#obs_path=wdir+'data\\HCAS_ref_sites\\HCAS_2.3\\data\\0.Inferred_Reference_Sites\\HCAS23_RC_BenchmarkSample_NSW_clipped.shp'
 
+#reference sites
+obs_path=wdir+'scrap\\pts_updated_500m_v11_1kmspacing_20volexp.shp'
+
+#predictor and response csvs
 pred_csv_path=wdir+'data\\predictors_described_v4.csv'
 resp_csv_path=wdir+'data\\responses_described_v2.csv'
+
 outdir = 'C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\scrap\\'
 
 #%%
-#
+
 df=gpd.read_file(obs_path)
 print(df)
-#
+
 preds=pd.read_csv(pred_csv_path)
 print(preds)
 
@@ -38,7 +41,6 @@ data_path='F:\\veg2_postdoc\\raster_subset_v3'
 fn1=os.listdir(data_path)
 fns=[s for s in fn1 if '.tif' in s]
 fn_dirs=glob.glob(data_path+'\\*.tif')
-
 
 #%%
 
@@ -67,6 +69,10 @@ for raster_path in fn_dirs:
 
 
 #%%
+
+"""
+Export
+"""
 
 df2=copy.copy(df)
 df3=pd.DataFrame(df2)
