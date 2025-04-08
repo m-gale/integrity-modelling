@@ -4,10 +4,25 @@ Created on Mon Jul 29 10:24:39 2024
 
 @author: mattg
 
-* -999s being used for prediction?
-* Train model, find the important predictors, only raster stack the most important, 
-re-train, then predict
 
+
+Check/improve:
+
+* -999s being used for prediction?
+
+* Only raster stack the most important predictors / those that have a minimum usefulness. Could reduce
+memory requirements. 
+
+* 500 km tiled prediction for loop could be implemented in parallel with enough memory. Can manage 
+max. 2 simultaneously with PC.
+
+* Further nan and unlikely value corrections for responses? E.g., forest height >100 m
+
+* Hyperparameters set after some fiddling. Could incorporate a sensitivity analysis for learning_rate,
+n_estimators, max_depth, num_leaves. This would add significant run time. 
+
+* Add 0.9 and 0.1 quantiles for estimating reasonable range of departure to be considered degraded.
+Assess whether useful. 
 
 """
 
@@ -19,50 +34,56 @@ import rasterio as rio
 import glob
 from shapely.ops import transform
 from sklearn.model_selection import KFold
-import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
 import lightgbm as lgb
 from rasterio.windows import Window
 
-
-
-
-
 #%%
 
 wdir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\'
+
+#most recent reference site csv
 obs_path=wdir+'scrap\\pts_updated_500m_v11_1kmspacing_20volexp_sampled_v1.csv'
-#obs_path='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\data\\HCAS_ref_sites\\HCAS_2.3\\data\\0.Inferred_Reference_Sites\\HCAS23_RC_BenchmarkSample_NSW_clipped_sampled.csv'
+
+#predictor and response lists with pathnames
 pred_csv_path=wdir+'data\\predictors_described_v4.csv'
 resp_csv_path=wdir+'data\\responses_described_v2.csv'
+
 outdir = 'C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\scrap\\'
 tile_outdir = 'F:\\veg2_postdoc\\raster_subset_v3\\'
 
+#path with predictor and response rasters resampled to standard res, extent, CRS
+data_path='F:\\veg2_postdoc\\raster_subset_v3'
+
 
 #%%
-#
+
+"""
+Read
+"""
+
 df=pd.read_csv(obs_path)
 print(df)
-#
+
 preds=pd.read_csv(pred_csv_path)
 print(preds)
 resps=pd.read_csv(resp_csv_path)
 print(resps)
 
 preds2=list(preds['Predictor'][0:])
-#preds3=copy.deepcopy(preds2)
-#preds3.append(resp)
 
-data_path='F:\\veg2_postdoc\\raster_subset_v3'
 fn1=os.listdir(data_path)
 fns=[s for s in fn1 if '.tif' in s]
 fn_dirs=glob.glob(data_path+'\\*.tif')
 
-
 #%%
 
-#check whether any predictors in dataframe are not present as geotiff in folder
-#add preds to gtiff list
+"""
+Check whether any predictors in dataframe are not present as geotiff in folder
+Add preds to gtiff list
+
+"""
+
 gtiff_list=[]
 pred_list=[]
 for a in df.keys()[4:]:
@@ -72,42 +93,7 @@ for a in df.keys()[4:]:
             gtiff_list.append(data_path+'//'+a+'.tif')
             pred_list.append(a)
     else:
-        print('Error: - '+a)
-        
-
-# print('Reading spatial layers...')   
-# #rlayers=[rio.open(f) for f in gtiff_list]
-# target_resolution = 500  # Desired resolution in meters
-# resampled_layers = []
-# for f in gtiff_list:
-#     print(f)
-#     if os.path.isfile(f.replace(data_path, data_path+'\\'+str(target_resolution)+'m_resampled'))==False:
-#         print('Resampling layer')
-#         if os.path.exists(data_path+'\\'+str(target_resolution)+'m_resampled')==False:
-#             os.mkdir(data_path+'\\'+str(target_resolution)+'m_resampled')
-#         out_filename = f.replace(data_path, data_path+'\\'+str(target_resolution)+'m_resampled')
-        
-#         with rio.open(f) as src:
-#             src_crs=src.crs
-            
-#         options = gdal.WarpOptions(xRes=target_resolution, yRes=target_resolution, resampleAlg=gdal.GRA_Bilinear,  
-#                                    srcSRS=src_crs, dstNodata=99999)
-#         ds = gdal.Warp(out_filename, f, options=options)
-        
-#     print('Adding to raster stack')    
-#     out_filename = f.replace(data_path, data_path+'\\'+str(target_resolution)+'m_resampled')
-#     with rio.open(out_filename) as src:
-#         resampled_layer=src.read(1)
-#     resampled_layers.append(resampled_layer)
-
-        
-# rstack = np.stack(resampled_layers, axis=-1)
-# #rstack=np.stack([layer.read(1) for layer in resampled_layers], axis=-1)
-
-# print('Converting to pandas dataframe...')
-# n_rows, n_cols, n_bands = rstack.shape
-# rstack_new = pd.DataFrame(rstack.reshape(n_rows * n_cols, n_bands), columns=pred_list)
-# del rstack
+        print('Error for '+a)
 
 #%%
 
@@ -133,7 +119,13 @@ df[target_cols] = df[target_cols].replace(99999, np.nan)
 df['Forest_height_2019_AUS'].loc[pd.isna(df['Forest_height_2019_AUS'])]=0
 df['Forest_height_2019_AUS'].loc[df['Forest_height_2019_AUS']>90]=np.nan
 
-#drop these because they show anthropogenic influence, unlikely to be strongly related to integrity
+#%%
+
+"""
+Drop these predictors because they show anthropogenic influence.
+They also don't make response candidates because unlikely to be strongly related to integrity.
+"""
+
 cols_to_drop=['Phosphorus_oxide_prediction_median',
                        'SND_005_015_EV_N_P_AU_TRN_N_20210902',
                        'SND_060_100_EV_N_P_AU_TRN_N_20210902',
@@ -165,17 +157,22 @@ cols_to_drop=['Phosphorus_oxide_prediction_median',
                        'Calcium_oxide_prediction_median',
                        'AVP_060_100_EV_N_P_AU_TRN_N_20220826'
                        ]
-
-# for col in cols_to_drop:
-#     print('Dropping '+col)
-#     if col in rstack_new:
-#         del rstack_new[col]
-#         del df[col]
         
 pred_list = [col for col in pred_list if col not in cols_to_drop]     
 print(str(len(df))+' points unfiltered')
 
+#remove from gtiff list
+filtered_gtiff_list = [
+    path for path in gtiff_list
+    if not any(col in path for col in cols_to_drop)
+]
+
 #%%
+
+"""
+Fivefold cross validation function, to run for each response
+Export csv with obs. vs. pred. for later graphics
+"""
 
 def fivefold(common_params, x_train, y_train):
     kf = KFold(n_splits=5, shuffle=True, random_state=42)
@@ -198,21 +195,22 @@ def fivefold(common_params, x_train, y_train):
 
 #%%
 
-#initialise tiles so that i can run predict without loading all predictors into memory
+"""
+Initialise 500 km tiles so that i can run predict without loading all predictors into memory
 
-# Define tile size (500 km × 500 km in meters)
-tile_size = 500000  # Adjust this if raster is in different units
+"""
+
+tile_size = 500000  # m
 
 tile_dir=tile_outdir+'tiled_'+str(int(tile_size/1000))+'km_v2'
 if os.path.exists(tile_dir)==False:
     os.mkdir(tile_dir)
 
-# Open a raster to get its dimensions
+#open a raster to get its dimensions
 with rio.open(gtiff_list[0]) as src:
     width, height = src.width, src.height
     transform = src.transform
     
-    # Get pixel size (assumes square pixels)
     pixel_size_x = abs(transform.a)  # X resolution (meters per pixel)
     pixel_size_y = abs(transform.e)  # Y resolution (meters per pixel)
 
@@ -236,22 +234,14 @@ with rio.open(gtiff_list[0]) as src:
 
 print(f"Generated {len(tiles)} tiles, each {tile_size}m x {tile_size}m")
 
-
-
 #%%
 
-filtered_gtiff_list = [
-    path for path in gtiff_list
-    if not any(col in path for col in cols_to_drop)
-]
-
-#%%
-resp='Forest_height_2019_AUS'
-resp='agb_australia_90m'
-resp='Veg_NDVI_mean_Q1'
-resp='mean_eta_summer_2013-2024'
-resp='AusEFlux_GPP_longterm_mean_NSW'
-resp='PV_PC_50'
+# resp='Forest_height_2019_AUS'
+# resp='agb_australia_90m'
+# resp='Veg_NDVI_mean_Q1'
+# resp='mean_eta_summer_2013-2024'
+# resp='AusEFlux_GPP_longterm_mean_NSW'
+# resp='PV_PC_50'
 
 for resp in resps['Response']:
     
@@ -302,10 +292,10 @@ for resp in resps['Response']:
             if 'month' in resp:
                 gbr = lgb.LGBMClassifier(**common_params)
             else:
+                #using quantile for future upper and lower confidence estimation
                 gbr = lgb.LGBMRegressor(objective="quantile", alpha=0.5, **common_params)
                 #gbr = lgb.LGBMRegressor(objective="regeression", **common_params)
-
-            
+        
             print('Training model...')
             all_models = gbr.fit(x_train, y_train)
                         
@@ -318,12 +308,11 @@ for resp in resps['Response']:
             #cross-validate
             print('Conducting fivefold CV...')
             obs_vs_pred=fivefold(common_params, x_train, y_train)
-            #obs_vs_pred.to_csv(outdir+resp+'_BRT_q'+'_'+obs_path.split('\\')[-1].replace('.csv', '_v10.csv'))
+            obs_vs_pred.to_csv(outdir+resp+'_BRT_q'+'_'+obs_path.split('\\')[-1].replace('.csv', '_v11.csv'))
             r2 = r2_score(obs_vs_pred['Observed'], obs_vs_pred['Predicted'])
             print(f"Overall R²: {r2:.4f}")
             
             for idx, window in enumerate(tiles):
-                #print(poo)
                 print(f"Processing tile {idx + 1}/{len(tiles)}")
                 resampled_layers = []
                 
@@ -335,7 +324,6 @@ for resp in resps['Response']:
                     pred_q_reshape=np.full_like(tile_data, np.nan, dtype='float32')[0]
                 
                 else:
-                    #print(poo)
                     print('Loading rasters for tile...')
                     for f in filtered_gtiff_list:
                         #print(f)      
@@ -354,7 +342,6 @@ for resp in resps['Response']:
                     print('Predicting...')
                     pred_q = all_models.predict(rstack_new)                    
                     pred_q[all_nan_mask] = np.nan
-                    #pred_q = np.where(all_nan_mask, np.nan, pred_q)
                     pred_q_reshape = pred_q.reshape((n_rows, n_cols))
                     
                 #export
@@ -379,23 +366,8 @@ for resp in resps['Response']:
         else:
             print('Not enough good data for response: '+resp)      
     else:
-        print('Not in DF')
+        print('Not in dataframe')
   
 
-#%%
-
-plt.figure(figsize=(6, 6))
-plt.scatter(obs_vs_pred_df['Observed'], obs_vs_pred_df['Predicted'], alpha=0.5)
-plt.plot([obs_vs_pred_df['Observed'].min(), obs_vs_pred_df['Observed'].max()], 
-         [obs_vs_pred_df['Observed'].min(), obs_vs_pred_df['Observed'].max()], 
-         color='red', linestyle='--')  # 1:1 line
-plt.xlabel('Observed')
-plt.ylabel('Predicted')
-plt.title('Observed vs Predicted')
-plt.show()
-    
-#%%
-
-    
     
 #%%

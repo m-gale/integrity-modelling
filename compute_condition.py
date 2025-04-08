@@ -27,21 +27,21 @@ print(resps)
 
 #resp='Forest_height_2019_AUS'
 resp='agb_australia_90m'
-bench_fn=bench_dir+resp+'_250m_national.tif'
+bench_fn=bench_dir+resp+'_250m_national_v2.tif'
 
 for resp in resps['Response']:
     print(resp)
     if len(glob.glob(bench_dir+resp+'*pts_updated_test21_90m_50thp_1km_sampled_v2_v10.tif'))>0:
         #bench_fn=glob.glob(bench_dir+resp+'*pts_updated_test21_90m_50thp_1km_sampled_v2_v10.tif')[0]
-        ext_fn=ext_dir+resp+'.tif'
+        ext_fn=ext_dir+resp+'v2.tif'
         
         with rio.open(bench_fn) as bench_src:
             bench=bench_src.read(1)
             meta=bench_src.meta
             target_resolution=bench_src.transform[0]
         
-        out_filename = bench_fn.replace('.tif', '_ext.tif')
-        if os.path.isfile(out_filename)==True:
+        out_filename = bench_fn.replace('.tif', '_ext2.tif')
+        if os.path.isfile(out_filename)==False:
             
             with rio.open(ext_fn) as src:
                 src_crs = src.crs
@@ -57,38 +57,38 @@ for resp in resps['Response']:
                 del data
                 del valid_data
                 
-            dtype_map = {
-                "uint8": gdal.GDT_Byte,
-                "uint16": gdal.GDT_UInt16,
-                "int16": gdal.GDT_Int16,
-                "uint32": gdal.GDT_UInt32,
-                "int32": gdal.GDT_Int32,
-                "float32": gdal.GDT_Float32,
-                "float64": gdal.GDT_Float64
-            }
-        
-            gdal_dtype = dtype_map.get(src_dtype, gdal.GDT_Float32)
+                dtype_map = {
+                    "uint8": gdal.GDT_Byte,
+                    "uint16": gdal.GDT_UInt16,
+                    "int16": gdal.GDT_Int16,
+                    "uint32": gdal.GDT_UInt32,
+                    "int32": gdal.GDT_Int32,
+                    "float32": gdal.GDT_Float32,
+                    "float64": gdal.GDT_Float64
+                }
             
-            if is_int==False:
-                options = gdal.WarpOptions(
-                    xRes=target_resolution,
-                    yRes=target_resolution,
-                    resampleAlg=gdal.GRA_Bilinear,
-                    srcSRS=src_crs,
-                    dstNodata=99999,
-                    outputType=gdal_dtype        
-                )
-            else:
-                options = gdal.WarpOptions(
-                    xRes=target_resolution,
-                    yRes=target_resolution,
-                    resampleAlg=gdal.GRA_NearestNeighbour,
-                    srcSRS=src_crs,
-                    dstNodata=255,
-                    outputType=gdal_dtype        
-                )
-            
-            ds = gdal.Warp(out_filename, ext_fn, options=options)
+                gdal_dtype = dtype_map.get(src_dtype, gdal.GDT_Float32)
+                
+                if is_int==False:
+                    options = gdal.WarpOptions(
+                        xRes=target_resolution,
+                        yRes=target_resolution,
+                        resampleAlg=gdal.GRA_Bilinear,
+                        srcSRS=src_crs,
+                        dstNodata=99999,
+                        outputType=gdal_dtype        
+                    )
+                else:
+                    options = gdal.WarpOptions(
+                        xRes=target_resolution,
+                        yRes=target_resolution,
+                        resampleAlg=gdal.GRA_NearestNeighbour,
+                        srcSRS=src_crs,
+                        dstNodata=255,
+                        outputType=gdal_dtype        
+                    )
+                
+                ds = gdal.Warp(out_filename, ext_fn, options=options)
             
             with rio.open(out_filename) as ext_src:
                 ext=ext_src.read(1)
