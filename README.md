@@ -1,5 +1,5 @@
-**Continental-scale prediction of ecosystem integrity using a contemporary ‘best-on-offer’ reference approach.
-**
+Continental-scale prediction of ecosystem integrity using a contemporary ‘best-on-offer’ reference approach.
+
 1. reference_suitability.py
 
 Generate a hierarchy of inferred ecosystem integrity layers from protected area, native vegetation, and land use layers.
