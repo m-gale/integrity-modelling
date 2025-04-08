@@ -220,13 +220,13 @@ with rasterio.open(gdm_fns[9].replace('.tif', '_resampled500.tif')) as src:
 
 metadata = {
     'driver': 'GTiff',
-    'count': 1,  # Only one band (cluster labels)
-    'dtype': 'float32',  # Use float32 for the raster
-    'crs': crs,  # Coordinate reference system
-    'transform': transform,  # The affine transformation (already in resampled space)
-    'width': cluster_raster.shape[1],  # Width of the resampled raster
-    'height': cluster_raster.shape[0],  # Height of the resampled raster
-    'nodata': np.nan  # Define no data value as NaN
+    'count': 1,  
+    'dtype': 'float32', 
+    'crs': crs, 
+    'transform': transform,  
+    'width': cluster_raster.shape[1], 
+    'height': cluster_raster.shape[0], 
+    'nodata': np.nan  
 }
 
 # Apply a 3x3 median filter
@@ -271,10 +271,10 @@ for i in merge_candidates:
         if i < j: 
             heappush(heap, (distances[i, j], i, j))
 
-# Keep track of active clusters
+#keep track of active clusters
 cluster_map = {i: i for i in range(k)} 
 
-# Merging loop until we reach k/2 clusters
+#merge classes until we reach k/2 clusters
 while len(set(cluster_map.values())) > final_k:
     if not heap:
         break
