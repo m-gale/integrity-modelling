@@ -11,8 +11,6 @@ To do:
 
 * Put the low-variation class combination into a function and implement it twice. 
 
-* If you don't scale the GDM values presumably the more important vars will be more important in the classificaiton. Test.
-
 """
 
 import numpy as np
@@ -159,10 +157,6 @@ del gdm2, gdm3, gdm4, gdm5, gdm6, gdm7, gdm8, gdm9, gdm10
 
 valid_mask = (~np.isnan(pixels).any(axis=1)) & (~np.isinf(pixels).any(axis=1)) & (~(pixels == nodata_value).any(axis=1))
 pixels = pixels[valid_mask]  # Keep only valid pixels
-
-#scale the GDM values, 1 is 1SD.
-scaler = StandardScaler()
-pixels = scaler.fit_transform(pixels)
 
 #convert to int for computational reasons
 pixels = (pixels * 1000).astype('int16')
