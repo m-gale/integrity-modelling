@@ -37,13 +37,16 @@ from sklearn.model_selection import KFold
 from sklearn.metrics import r2_score
 import lightgbm as lgb
 from rasterio.windows import Window
+from shapely.geometry import box
+import geopandas as gpd
+
 
 #%%
 
 wdir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\'
 
 #most recent reference site csv
-obs_path=wdir+'scrap\\pts_updated_500m_v11_1kmspacing_20volexp_sampled_v1.csv'
+obs_path=wdir+'scrap\\pts_updated_500m_v11_1kmspacing_20volexp_residuals_sampled_v1.csv'
 
 #predictor and response lists with pathnames
 pred_csv_path=wdir+'data\\predictors_described_v4.csv'
@@ -54,6 +57,9 @@ tile_outdir = 'F:\\veg2_postdoc\\raster_subset_v3\\'
 
 #path with predictor and response rasters resampled to standard res, extent, CRS
 data_path='F:\\veg2_postdoc\\raster_subset_v3'
+
+#cluster fn
+cluster_fn='cluster_raster46_s_simplified'
 
 
 #%%
@@ -119,6 +125,9 @@ df[target_cols] = df[target_cols].replace(99999, np.nan)
 df['Forest_height_2019_AUS'].loc[pd.isna(df['Forest_height_2019_AUS'])]=0
 df['Forest_height_2019_AUS'].loc[df['Forest_height_2019_AUS']>90]=np.nan
 
+df["cluster_raster46_s_simplified"] = df["cluster_raster46_s_simplified"].astype("category")
+cat_features = [cluster_fn]
+
 #%%
 
 """
@@ -167,6 +176,12 @@ filtered_gtiff_list = [
     if not any(col in path for col in cols_to_drop)
 ]
 
+#add cluster ras
+pred_list.append(cluster_fn)
+filtered_gtiff_list.append(data_path+'//'+cluster_fn+'.tif')
+
+
+
 #%%
 
 """
@@ -202,37 +217,55 @@ Initialise 500 km tiles so that i can run predict without loading all predictors
 
 tile_size = 500000  # m
 
-tile_dir=tile_outdir+'tiled_'+str(int(tile_size/1000))+'km_v2'
+tile_dir=tile_outdir+'tiled_'+str(int(tile_size/1000))+'km_v3'
 if os.path.exists(tile_dir)==False:
     os.mkdir(tile_dir)
+ 
+#list of geoms and ids to build shp tile index
+tile_polys = []
+tile_ids = []
+tile_col_offs = []
+tile_row_offs = []
 
 #open a raster to get its dimensions
 with rio.open(gtiff_list[0]) as src:
     width, height = src.width, src.height
     transform = src.transform
     
-    pixel_size_x = abs(transform.a)  # X resolution (meters per pixel)
-    pixel_size_y = abs(transform.e)  # Y resolution (meters per pixel)
+    pixel_size_x = abs(transform.a)
+    pixel_size_y = abs(transform.e)
 
-    # Convert tile size to pixels
     tile_size_x = int(tile_size / pixel_size_x)
     tile_size_y = int(tile_size / pixel_size_y)
 
-    # Determine number of tiles in each direction
     num_tiles_x = (width // tile_size_x) + 1
     num_tiles_y = (height // tile_size_y) + 1
 
-    # Create list of windows
     tiles = []
     for i in range(num_tiles_x):
         for j in range(num_tiles_y):
             x_off = i * tile_size_x
             y_off = j * tile_size_y
-            
+
             window = Window(x_off, y_off, tile_size_x, tile_size_y)
             tiles.append(window)
 
-print(f"Generated {len(tiles)} tiles, each {tile_size}m x {tile_size}m")
+            bounds = rio.windows.bounds(window, transform=transform)
+            geom = box(*bounds)
+
+            tile_polys.append(geom)
+            tile_ids.append(len(tiles) - 1)
+            tile_col_offs.append(x_off)
+            tile_row_offs.append(y_off)
+
+gdf_tiles = gpd.GeoDataFrame({
+    'tile_id': tile_ids,
+    'col_off': tile_col_offs,
+    'row_off': tile_row_offs,
+    'geometry': tile_polys
+}, crs=src.crs)
+
+#gdf_tiles.to_file(outdir+'tile_index_'+str(int(tile_size/1000))+'_km_v2.shp')
 
 #%%
 
@@ -272,14 +305,32 @@ for resp in resps['Response']:
             print('Predictors: ')
             print(list(x_train.keys()))
             
+            # common_params = dict(
+            #     learning_rate=0.06,
+            #     n_estimators=2000,
+            #     max_depth=30,
+            #     num_leaves=256,
+            #     min_child_samples=10,
+            #     min_split_gain=0.1,
+            #     max_bin=512,
+            #     reg_alpha=0.1,
+            #     reg_lambda=0.5,
+            #     feature_fraction=0.9,
+            #     bagging_fraction=0.8,
+            #     bagging_freq=5,
+            #     verbosity=-1,
+            #     n_jobs=-1
+            # )
+            
+            #to overfit
             common_params = dict(
                 learning_rate=0.06,
                 n_estimators=2000,
-                max_depth=30,
-                num_leaves=256,
-                min_child_samples=10,
+                max_depth=50,
+                num_leaves=512,
+                min_child_samples=5,
                 min_split_gain=0.1,
-                max_bin=512,
+                max_bin=1024,
                 reg_alpha=0.1,
                 reg_lambda=0.5,
                 feature_fraction=0.9,
@@ -297,7 +348,7 @@ for resp in resps['Response']:
                 #gbr = lgb.LGBMRegressor(objective="regeression", **common_params)
         
             print('Training model...')
-            all_models = gbr.fit(x_train, y_train)
+            all_models = gbr.fit(x_train, y_train, categorical_feature=cat_features)
                         
             imp = gbr.feature_importances_
             importance_df = pd.DataFrame({
@@ -312,7 +363,14 @@ for resp in resps['Response']:
             r2 = r2_score(obs_vs_pred['Observed'], obs_vs_pred['Predicted'])
             print(f"Overall R²: {r2:.4f}")
             
+            #for selecting a specific tile
+            #target_col_off = 14000
+            #target_row_off = 10000
             for idx, window in enumerate(tiles):
+                
+                # if window.col_off != target_col_off or window.row_off != target_row_off:
+                #     continue 
+
                 print(f"Processing tile {idx + 1}/{len(tiles)}")
                 resampled_layers = []
                 
@@ -339,6 +397,10 @@ for resp in resps['Response']:
                     rstack_new=rstack_new.replace(9999, np.nan)
                     all_nan_mask = rstack_new.isna().any(axis=1)
                     
+                    for cat in cat_features:
+                        if cat in rstack_new.columns:
+                            rstack_new[cat] = rstack_new[cat].astype('category')
+        
                     print('Predicting...')
                     pred_q = all_models.predict(rstack_new)                    
                     pred_q[all_nan_mask] = np.nan
@@ -358,6 +420,7 @@ for resp in resps['Response']:
                     "compress": "lzw"
                 })
                 tile_out_path=tile_dir+'\\'+resp+'_tile_'+str(idx)+'.tif'
+                #tile_out_path=outdir+resp+'_tile_'+str(idx)+'_v2.tif'
                 with rio.open(tile_out_path, "w", **tile_profile) as dst:
                     dst.write(pred_q_reshape.astype(tile_profile["dtype"]), 1)
                 print('Exported '+tile_out_path)
