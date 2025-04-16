@@ -16,11 +16,7 @@ import geopandas as gpd
 import pandas as pd
 from osgeo import gdal
 import glob
-import rioxarray as rx
 import numpy as np
-from shapely.geometry import Polygon
-import copy
-import fiona
 import os
 
 #%%
@@ -30,6 +26,7 @@ import os
 wdir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\data'
 fn_lu=pd.read_csv(wdir+'\\predictors_described_v4.csv')
 resp_lu=pd.read_csv(wdir+'\\responses_described_v2.csv')
+scrap_dir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\scrap'
 
 
 #%%
@@ -49,14 +46,14 @@ maxy=msk.bounds['maxy'][0]+1000
 outbnds=(minx, miny, maxx, maxy)
 
 #rest resample resolution
-res=250
+res=90
 
 #%%
 
 #set outdir
 
-outdir_temp='F:\\veg2_postdoc\\raster_subset_v3\\TEMP\\'
-outdir='F:\\veg2_postdoc\\raster_subset_v3\\'
+outdir_temp='F:\\veg2_postdoc\\raster_subset_v4\\TEMP\\'
+outdir='F:\\veg2_postdoc\\raster_subset_v4\\'
 if os.path.exists(outdir)==False:
     os.mkdir(outdir)
 if os.path.exists(outdir_temp)==False:
@@ -68,7 +65,8 @@ if os.path.exists(outdir_temp)==False:
 """
 Make a water mask by classifying the seasonal water layer
 """
-water_mask_dir='F:\\veg2_postdoc\\raster_subset_v3\\TEMP\\water_mask_250m_temp.tif'
+
+water_mask_dir='F:\\veg2_postdoc\\raster_subset_v4\\TEMP\\water_mask_90m_temp.tif'
 
 outfn2=water_mask_dir.replace('_temp', '')
 if os.path.isfile(outfn2)==False:
@@ -80,7 +78,7 @@ if os.path.isfile(outfn2)==False:
     ras[ras!=meta['nodata']]=1
     ras[ras!=1]=0
     meta['dtype']='uint8'
-    outfn2=water_mask_dir.replace('_temp', '')
+    meta['nodata']=255
     with rio.open(outfn2, "w", **meta) as dest:
             dest.write(ras, 1)
 
@@ -108,7 +106,7 @@ def standardise_ras(fn, fn_dir, resamp, outbnds, outdir_temp, outdir, res, r_mas
     
     outfn1=outdir_temp+fn+'.tif'
     
-    #bilinear ig continuous
+    #bilinear if continuous
     #NN if categorical
     if resamp=='BL':
         options = gdal.WarpOptions(xRes=res, yRes=res, resampleAlg=gdal.GRA_Bilinear, outputBounds=outbnds, 
@@ -140,6 +138,12 @@ def standardise_ras(fn, fn_dir, resamp, outbnds, outdir_temp, outdir, res, r_mas
         outfn2=outdir+fn+'.tif'
         with rio.open(outfn2, "w", **meta) as dest:
                 dest.write(ras, 1)
+        
+        #delete temp file
+        if os.path.exists(outfn1):
+          os.remove(outfn1)
+                
+        
                 
 
 #%%
@@ -196,3 +200,16 @@ for i in range(0, len(resp_lu)):
 
 #%%
 
+"""
+For cluster ras
+
+"""
+
+fn='cluster_raster46_s_simplified'    
+resamp='NN'
+fn_dir=glob.glob(scrap_dir+'\\'+fn+'.tif')[0]
+if os.path.isfile(outdir+fn+'.tif'):
+    print('Already exists')
+else:
+    standardise_ras(fn, fn_dir, resamp, outbnds, outdir_temp, outdir, res, r_mask, mask_meta, mask_ibra=True)
+    counter=counter+1    
