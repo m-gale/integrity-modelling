@@ -32,8 +32,13 @@ from heapq import heappop, heappush
 #%%
 
 #location of GDM transformed vars of Mokany et al. 2022
+#local
 wdir='F:\\veg2_postdoc\\data\\reference\\National\\mokany_etal_GDM_layers\\data\\250m\\'
 scrap_dir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\scrap\\'
+
+#nci
+...
+
 
 gdm_fns=glob(wdir+'*.tif')
 #len(gdm_fns)
