@@ -178,8 +178,8 @@ Initialise
 """
 
 #initialise distance tree
-if len(sample_coords) > 0:
-    global_tree = KDTree(sample_coords)
+if len(coords) > 0:
+    global_tree = KDTree(coords)
 else:
     global_tree = KDTree(np.empty((0, 2))) 
 

@@ -14,6 +14,8 @@ import glob
 from pyproj import Transformer
 from shapely.ops import transform
 import copy
+from shapely import wkt
+
 
 
 #%%
@@ -21,7 +23,8 @@ import copy
 wdir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\'
 
 #reference sites
-obs_path=wdir+'scrap\\pts_updated_500m_v11_1kmspacing_20volexp.shp'
+obs_path=wdir+'scrap\\pts_updated_500m_v11_1kmspacing_20volexp_residuals.shp'
+#obs_path=wdir+'scrap\\pts_updated_500m_v11_1kmspacing_20volexp_sampled_v1.csv'
 
 #predictor and response csvs
 pred_csv_path=wdir+'data\\predictors_described_v4.csv'
@@ -33,6 +36,13 @@ outdir = 'C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\scrap\\'
 
 df=gpd.read_file(obs_path)
 print(df)
+
+#if from already sampled csv
+# df=pd.read_csv(obs_path)
+# print(df)
+# df['geometry'] = df['geometry'].apply(wkt.loads)
+# df = gpd.GeoDataFrame(df, geometry='geometry')
+# df.set_crs(epsg=3577, inplace=True)
 
 preds=pd.read_csv(pred_csv_path)
 print(preds)

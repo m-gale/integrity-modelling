@@ -53,7 +53,7 @@ res=90
 #set outdir
 
 outdir_temp='F:\\veg2_postdoc\\raster_subset_v4\\TEMP\\'
-outdir='F:\\veg2_postdoc\\raster_subset_v4\\'
+outdir='D:\\veg2_postdoc\\raster_subset_v4\\'
 if os.path.exists(outdir)==False:
     os.mkdir(outdir)
 if os.path.exists(outdir_temp)==False:
@@ -131,21 +131,14 @@ def standardise_ras(fn, fn_dir, resamp, outbnds, outdir_temp, outdir, res, r_mas
         ras[(r_mask==1) & (ras==meta['nodata'])]=np.nanmedian(ras[ras!=meta['nodata']])
         ras[r_mask==mask_meta['nodata']]=meta['nodata']
         ras[r_mask==0]=meta['nodata']
-
         
         #msk_ras=rio.mask.mask(src, msk['geometry'], nodata=-999)
             
         outfn2=outdir+fn+'.tif'
         with rio.open(outfn2, "w", **meta) as dest:
                 dest.write(ras, 1)
-        
-        #delete temp file
-        if os.path.exists(outfn1):
-          os.remove(outfn1)
-                
-        
-                
-
+                  
+            
 #%%
 
 """
@@ -166,7 +159,14 @@ for i in range(0, len(fn_lu)):
             print('Already exists')
         else:
             standardise_ras(fn, fn_dir, resamp, outbnds, outdir_temp, outdir, res, r_mask, mask_meta, mask_ibra=True)
-            counter=counter+1        
+            counter=counter+1      
+            
+            #delete preceding temp file due to locking
+            if counter>1:
+                out_del=outdir_temp+fn_lu['Predictor'][i-1]+'.tif'
+                if os.path.isfile(out_del):
+                    os.remove(outfn1)
+            
     else:
         print('File not found: '+str(i))
         print('Error: '+fn)
@@ -176,27 +176,39 @@ for i in range(0, len(fn_lu)):
 
 """
 For responses
+
+npv_pc_50_2013-2024_mean_australia - 2  /  32
+Error: 8
+Error: npv_pc_50_2013-2024_mean_australia
+
 """
 
 counter=1
 #i=3
 for i in range(0, len(resp_lu)):
     print('')
-    try:
-        print(resp_lu['Response'][i]  +' - '+str(counter)+'  /  '+str(len(resp_lu)))
-        fn=resp_lu['Response'][i]    
-        resamp=resp_lu['Resample_method'][i]
-        fn_dir=glob.glob(resp_lu['Directory'][i]+'\\'+fn+'.'+resp_lu['Format'][i])[0]
-        #fn_dir=glob.glob('F:\\veg2_postdoc\\raster_subset_v1\\'+fn+'.tif')[0]
-        #outfn1=outdir_temp+fn+'.tif'
-        if os.path.isfile(outdir+fn+'.tif'):
-            print('Already exists')
-        else:
-            standardise_ras(fn, fn_dir, resamp, outbnds, outdir_temp, outdir, res, r_mask, mask_meta, mask_ibra=True)
-            counter=counter+1        
-    except:
-        print('Error: '+str(i))
-        print('Error: '+fn)
+    #try:
+    print(resp_lu['Response'][i]  +' - '+str(counter)+'  /  '+str(len(resp_lu)))
+    fn=resp_lu['Response'][i]    
+    resamp=resp_lu['Resample_method'][i]
+    fn_dir=glob.glob(resp_lu['Directory'][i]+'\\'+fn+'.'+resp_lu['Format'][i])[0]
+    #fn_dir=glob.glob('F:\\veg2_postdoc\\raster_subset_v1\\'+fn+'.tif')[0]
+    #outfn1=outdir_temp+fn+'.tif'
+    if os.path.isfile(outdir+fn+'.tif'):
+        print('Already exists')
+    else:
+        standardise_ras(fn, fn_dir, resamp, outbnds, outdir_temp, outdir, res, r_mask, mask_meta, mask_ibra=True)
+        counter=counter+1   
+        
+        #delete preceding temp file due to locking
+        if counter>1:
+            out_del=outdir_temp+fn_lu['Predictor'][i-1]+'.tif'
+            if os.path.isfile(out_del):
+                os.remove(outfn1)
+        
+    #except:
+    print('Error: '+str(i))
+    print('Error: '+fn)
 
 #%%
 
@@ -213,3 +225,5 @@ if os.path.isfile(outdir+fn+'.tif'):
 else:
     standardise_ras(fn, fn_dir, resamp, outbnds, outdir_temp, outdir, res, r_mask, mask_meta, mask_ibra=True)
     counter=counter+1    
+
+#%%

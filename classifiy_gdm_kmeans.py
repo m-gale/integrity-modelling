@@ -150,6 +150,11 @@ with rasterio.open(gdm_fns[9].replace('.tif', '_resampled500.tif')) as pc1_src:
 Pixels to dataframe
 
 """
+
+#weight the the soil some more
+gdm8=gdm8*3
+gdm9=gdm9*3
+
 pixels = np.vstack((gdm1.flatten(), gdm2.flatten(),gdm3.flatten(),gdm4.flatten(),gdm5.flatten(),
                     gdm6.flatten(),gdm7.flatten(),gdm8.flatten(),gdm9.flatten(),gdm10.flatten(),)).T
 
@@ -161,6 +166,7 @@ pixels = pixels[valid_mask]  # Keep only valid pixels
 #convert to int for computational reasons
 pixels = (pixels * 1000).astype('int16')
 #np.nanmin(pixels)
+#np.nanmax(pixels)
 
 #%%
 
@@ -170,7 +176,7 @@ k-means clustering on the valid pixels
 """
 
 #no. clusters
-k = 500  
+k = 1000  
 
 #small bach size gives faster processing via some approximation.
 #over 10000 seems pretty stable
@@ -206,7 +212,7 @@ clusters_flat[valid_mask] = labels
 # Reshape the cluster array back to the 2D raster shape
 cluster_raster = clusters_flat.reshape(gdm1.shape)
 
-output_path = scrap_dir + 'cluster_raster46_s_original.tif'
+output_path = scrap_dir + 'cluster_raster48_s_original.tif'
 # Retrieve the transform and metadata from the resampled climate PCA raster
 with rasterio.open(gdm_fns[9].replace('.tif', '_resampled500.tif')) as src:
     transform = src.transform
@@ -307,7 +313,7 @@ clusters = clusters_flat.reshape(gdm1.shape)
 smoothed_raster = median_filter(clusters, size=3)
 
 #export
-output_path = scrap_dir + 'cluster_raster46_s_simplified.tif'
+output_path = scrap_dir + 'cluster_raster48_s_simplified.tif'
 with rasterio.open(output_path, 'w', **metadata) as dst:
     dst.write(smoothed_raster, 1)
 
