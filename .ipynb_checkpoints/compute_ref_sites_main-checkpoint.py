@@ -94,16 +94,25 @@ len(gdm_fns)
 gdm_layers = []
 for fn in gdm_fns[:10]:  # take the first 10
     print(fn)
-    with rio.open(fn) as src:
-        gdm_layers.append(src.read(1))
-
+    if "WaterCoverage" in fn:
+        with rio.open(fn) as src:
+            water_mask=src.read(1)
+            gdm_layers.append(water_mask)
+    else:
+        with rio.open(fn) as src:
+            gdm_layers.append(src.read(1))
+        
 # Convert list to 3D NumPy array (shape: height x width x 10)
 gdm_raster = np.stack(gdm_layers, axis=-1)  
+gdm_raster[water_mask>0.5]=-9999
 del gdm_layers
+del water_mask
 
 #mask so that nan values are not selected as rows, cols
-gdm_raster[gdm_raster == -9999] = np.nan
+gdm_raster[(gdm_raster == -9999)] = np.nan
 gdm_raster_mask=~np.isnan(gdm_raster).any(axis=2)
+
+
 
 #%%
 
@@ -135,7 +144,29 @@ else:
     pca.fit(gdm_sample)  # Learn PCA components from sample
     
     del gdm_valid, gdm_sample, mask, gdm_2d
+    
+    gdm_pcs_valid = pca.transform(gdm_valid)
+    n_pixels = gdm_2d.shape[0]
+    pc_full = np.full((n_pixels, 3), np.nan)
+    pc_full[mask, :] = gdm_pcs_valid
+    
+    del gdm_pcs_valid
 
+    pc_stack = pc_full.reshape((n_rows, n_cols, 3)).transpose((2, 0, 1))  # shape: (3, rows, cols)
+    
+    with rio.open(
+        out_dir+"gdm_pca_3comp.tif", "w",
+        driver="GTiff",
+        height=n_rows,
+        width=n_cols,
+        count=3,
+        dtype=src.meta['dtype'],
+        crs=src.meta['crs'],  # Replace with actual CRS
+        transform=src.meta['transform'],
+        nodata=src.meta['nodata']  # Or set to a specific value like -9999 if desired
+    ) as dst:
+        dst.write(pc_stack)
+        
     joblib.dump(pca, out_dir+'pca_fit_3comp.joblib')
     
 #%%
@@ -189,12 +220,16 @@ simplifier = 0.001
 
 #determines how much the existing sites hull is expanded to ensure that new sites are truly outside the existing hull
 #i.e., 1.1 expands by 10% overall volume, with equal expansion in all dimensions
-sfactor=1.1
+sfactor=1.25
 
 #determines how many potential new sites are run in maximise min distance function
 #more points take longer to run
 #can be adjusted in turn with simplifier
 maxkd=20000
+
+#take a percentile of candidate points of highest distance from existing points.
+#e.g., consider only the top half furthest points from existing points
+distpa=50
 
 batch_size = 50
 
@@ -239,276 +274,276 @@ for pass_no in pass_nos:
     #i=1
     cov_raster = np.full_like(cluster_raster, np.nan, dtype=np.float32)
     for i in cuq:
-#        try:
-        if ~np.isnan(i):
-            print('')
-            print('Pass '+str(pass_no))
-            print(f"Processing class {i}")
-            
-            existing_samples = sum(pts_updated['class_kmeans'] == i)
-            target_locs = (cluster_raster == i) & (gdm_raster_mask)
-            ref_locs = (cluster_raster == i) & (ref_ras == pass_no) & (gdm_raster_mask)
-            rows, cols = np.where(target_locs)
-            ref_rows, ref_cols = np.where(ref_locs)
-            ref_indices = np.column_stack((ref_rows, ref_cols))
-
-            if len(ref_rows) > 0:
-                print(f"Pixels available for sampling: {ref_rows.size}")
-                # Extract point coordinates
-                pts_coords = [(geom.x, geom.y) for geom in pts_updated[pts_updated['class_kmeans']==i].geometry]
-                rowcols = [rowcol(ref_trans, x, y) for x, y in pts_coords]
-                existing_sites_gdm = np.array([gdm_raster[row, col, :] for row, col in rowcols])
-                candidate_sites_gdm = gdm_raster[target_locs, :]
-                ref_sites = gdm_raster[ref_locs, :]
-                #~15 sites min to generate hull after outlier removal
-                if (existing_sites_gdm.shape[0] > 15) & (len(ref_sites)>1):
-                    existing_sites_pca = pca.transform(existing_sites_gdm)  
-                    candidate_sites_pca = pca.transform(candidate_sites_gdm)  
-                    ref_sites_pca = pca.transform(ref_sites)
-                    if len(candidate_sites_pca)>500000:
-                        candidate_sites_pca = candidate_sites_pca[np.random.choice(candidate_sites_pca.shape[0], size=500000, replace=False)]
-                    existing_hull_volume = convex_hull_volume(existing_sites_pca, 100)
-                    candidate_hull_volume = convex_hull_volume(candidate_sites_pca, 99)
-                    #expand the hull of current sites by 10% volume to capture more diverse potential new sites
-                    d = existing_sites_pca.shape[1]  # number of dimensions
-                    centroid = np.mean(existing_sites_pca, axis=0)                                 
-                    scale_factor = (sfactor) ** (1 / d)
-                    expanded_existing_sites_pca = centroid + (existing_sites_pca - centroid) * scale_factor
-                    hull = ConvexHull(remove_outliers(expanded_existing_sites_pca, 100))
-                    outside_mask = points_outside_hull(hull, ref_sites_pca)
-                    #initialise the combined hull, which gets updated in batch for loop
-                    #combined hull serves volume comparisons
-                    #expanded hull makes sure that truly outside-hull points are added
-                    combined_hull=hull  
-                    expanded_combined_hull=hull
-                    if candidate_hull_volume > 0:
-                        coverage_ratio = existing_hull_volume / candidate_hull_volume
-                        print(f"Coverage ratio: {coverage_ratio:.2%}")
-                        cov_raster[cluster_raster == i] = coverage_ratio  
-                        outside_points = ref_sites_pca[outside_mask]
-                        outside_indices = ref_indices[outside_mask]
-
-                        print(f"Candidate sites: {outside_mask.shape[0]}")
-                        print(f"Points outside convex hull: {outside_points.shape[0]}")
-                        
-                        if outside_points.shape[0] > 0:
-                            new_sites_geo = [ref_trans * (col, row) for row, col in outside_indices]
-                            #candidate points outside min distance with existing sites
-                            global_distances, _ = global_tree.query(new_sites_geo)
-                            new_sites=np.array(new_sites_geo)[global_distances>min_distance]
-                            if len(new_sites)>0:
-                                #this is to avoid kdtree calculations that are unnecessarily large
-                                if len(new_sites)>maxkd:
-                                    new_sites = new_sites[np.random.choice(new_sites.shape[0], size=maxkd, replace=False)]
-                                #initial distance filter to try to maximise distance between points
-                                mmd_batch=max(int(len(new_sites)*simplifier), 1)
-                                max_it=int((len(new_sites)/mmd_batch)*1.1)
-                                new_sites_filt=maximize_min_distance(new_sites, min_distance, mmd_batch, max_iterations=max_it)
-                                print(f"Points meeting distance criteria: {new_sites_filt.shape[0]}")
-                                if len(new_sites_filt)>0:
-                                    #process batches, building the kdtree
-                                    #re-evaluate the convex hull
-                                    #len(new_sites_filt_geo)
-                                    batches = [new_sites_filt[i:i + batch_size] for i in range(0, len(new_sites_filt), batch_size)]
-                                    pts_new=[]
-                                    new_coverage_ratio=coverage_ratio
-                                    counter=0
-                                    for batch in batches:
-                                        if (new_coverage_ratio < cov_threshold):
-                                            counter=counter+1
-                                            #add if still outside hull
-                                            batch_rowcols = [rowcol(ref_trans, x, y) for x, y in batch]
-                                            batch_gdm = np.array([gdm_raster[row, col, :] for row, col in batch_rowcols])
-                                            # Create a list of valid row-col indices where the data is not NaN
-                                            nan_mask = np.array([~np.any(np.isnan(gdm_raster[row, col, :])) for row, col in batch_rowcols])
-                                            batch_gdm=batch_gdm[nan_mask]
-                                            batch_filt_pca = pca.transform(batch_gdm)
-                                            #outside_mask = points_outside_hull(combined_hull, batch_filt_pca)
-                                            outside_mask, min_distances = points_and_distance_outside_hull(expanded_combined_hull, batch_filt_pca)
-                                            outside_mask=outside_mask & (min_distances>np.nanpercentile(min_distances[outside_mask], 50)) 
-                                            outside_points = batch_filt_pca[outside_mask]
-                                            outside_indices = np.array(batch)[nan_mask][outside_mask]
-                                            batch_new=[tuple(coord) for coord in outside_indices]
-                                            print('Batch '+str(counter)+' - '+str(len(batch_new))+' still outside hull')
-                                            #add pts in batch outside of convex hull
-                                            pts_coords.extend(batch_new)
-                                            pts_new.extend(batch_new)
-                                            #calculate new %volume
-                                            new_sites_rowcols = [rowcol(ref_trans, x, y) for x, y in pts_coords]
-                                            new_sites_gdm = np.array([gdm_raster[row, col, :] for row, col in new_sites_rowcols])
-                                            new_sites_filt_pca = pca.transform(new_sites_gdm)
-                                            if len(remove_outliers(new_sites_filt_pca, 99))>6:
-                                                combined_hull = ConvexHull(remove_outliers(new_sites_filt_pca, 99))
-                                                centroid = np.mean(new_sites_filt_pca, axis=0)                                 
-                                                expanded_new_sites_filt_pca = centroid + (new_sites_filt_pca - centroid) * scale_factor
-                                                expanded_combined_hull=ConvexHull(remove_outliers(expanded_new_sites_filt_pca, 99))
-                                            combined_hull_volume = combined_hull.volume
-                                            new_coverage_ratio = combined_hull_volume / candidate_hull_volume
-                                        else:
-                                            print('Already reached target coverage')
-                                    new_df = pd.DataFrame(pts_new, columns=['longitude', 'latitude'])
-                                    new_df['source'] = ref_fn.split('\\')[-1]
-                                    new_df['class_kmeans'] = i
-                                    new_gdf = gpd.GeoDataFrame(new_df, 
-                                                           geometry=gpd.points_from_xy(new_df['longitude'], new_df['latitude']),
-                                                           crs='EPSG:3577') 
-                                    print('Adding '+str(len(new_gdf))+' points')
-                                    print('New coverage: '+str(new_coverage_ratio*100)[0:4]+'%')
-                                    pts_updated = pd.concat([pts_updated, new_gdf[['source', 'class_kmeans', 'geometry']]], ignore_index=True)
-                                    #update global tree
-                                    global_tree = KDTree([geom.coords[0] for geom in pts_updated.geometry.to_crs("EPSG:3577")])    
-                            else:
-                                print('No sites matching distance criteria')
-                        else:
-                            print('No sites outside of existing hull')
-                    else:
-                        print('No reference sites to choose from')
-                else:
-                    print('Not enough existing sites to generate hull')
-                    #not enough existing points to calculate a hull
-                    #add a few points to get it going
-                    new_sites_geo = [ref_trans * (col, row) for row, col in ref_indices]
-                    if len(new_sites_geo)>5000:
-                        new_sites_geo = np.array(new_sites_geo)[np.random.choice(len(new_sites_geo), size=5000, replace=False)]
-                    #candidate points outside min distance with existing sites
-                    global_distances, _ = global_tree.query(new_sites_geo)
-                    new_sites=np.array(new_sites_geo)[global_distances>min_distance]
-                    if len(new_sites)>0:
-                        mmd_batch=max(int(len(new_sites)*simplifier), 1)
-                        max_it=int((len(new_sites)/mmd_batch)*1.1)
-                        new_sites_filt=maximize_min_distance(new_sites, min_distance, mmd_batch, max_iterations=max_it)
-                        print(f"Points meeting distance criteria: {new_sites_filt.shape[0]}")
-                        if len(new_sites_filt)>0:
-                            new_sites_filt_geo = new_sites_filt[np.random.choice(len(new_sites_filt), size=min(len(new_sites_filt), start_seed), replace=False)]
-                            #check nan in new sites
-                            rowcols_check = [rowcol(ref_trans, x, y) for x, y in new_sites_filt_geo]
-                            nan_mask = np.array([~np.any(np.isnan(gdm_raster[row, col, :])) for row, col in rowcols_check])
-                            new_sites_filt_geo = new_sites_filt_geo[nan_mask]
-                            new_df = pd.DataFrame(new_sites_filt_geo, columns=['longitude', 'latitude'])
-                            new_df['source'] = ref_fn.split('\\')[-1]
-                            new_df['class_kmeans'] = i
-                            new_gdf = gpd.GeoDataFrame(new_df, 
-                                                   geometry=gpd.points_from_xy(new_df['longitude'], new_df['latitude']),
-                                                   crs='EPSG:3577') 
-                            print('Adding '+str(len(new_gdf))+' points')
-                            pts_updated = pd.concat([pts_updated, new_gdf[['source', 'class_kmeans', 'geometry']]], ignore_index=True)
-                            #update global tree
-                            global_tree = KDTree([geom.coords[0] for geom in pts_updated.geometry.to_crs("EPSG:3577")])
-                            
-                            #run again
-                            if len(new_sites_filt)>15:
-                                pts_coords = [(geom.x, geom.y) for geom in pts_updated[pts_updated['class_kmeans']==i].geometry]
-                                rowcols = [rowcol(ref_trans, x, y) for x, y in pts_coords]
-                                existing_sites_gdm = np.array([gdm_raster[row, col, :] for row, col in rowcols])
-                                candidate_sites_gdm = gdm_raster[target_locs, :]
-                                ref_sites = gdm_raster[ref_locs, :]
-                                existing_sites_pca = pca.transform(existing_sites_gdm)  
-                                candidate_sites_pca = pca.transform(candidate_sites_gdm)  
-                                ref_sites_pca = pca.transform(ref_sites)
-                                ref_indices = np.column_stack((ref_rows, ref_cols))
-                                if len(candidate_sites_pca)>500000:
-                                    candidate_sites_pca = candidate_sites_pca[np.random.choice(candidate_sites_pca.shape[0], size=500000, replace=False)]
-                                existing_hull_volume = convex_hull_volume(existing_sites_pca, 100)
-                                candidate_hull_volume = convex_hull_volume(candidate_sites_pca, 99)
-                                #expand the hull of current sites by 10% volume to capture more diverse potential new sites
-                                d = existing_sites_pca.shape[1]  # number of dimensions
-                                centroid = np.mean(existing_sites_pca, axis=0)                                 
-                                scale_factor = (sfactor) ** (1 / d)
-                                expanded_existing_sites_pca = centroid + (existing_sites_pca - centroid) * scale_factor
-                                hull = ConvexHull(remove_outliers(expanded_existing_sites_pca, 100))
-                                outside_mask = points_outside_hull(hull, ref_sites_pca)
-                                #initialise the combined hull, which gets updated in batch for loop
-                                #combined hull serves volume comparisons
-                                #expanded hull makes sure that truly outside-hull points are added
-                                combined_hull=hull  
-                                expanded_combined_hull=hull                
-                                if candidate_hull_volume > 0:
-                                    coverage_ratio = existing_hull_volume / candidate_hull_volume
-                                    print(f"Coverage ratio: {coverage_ratio:.2%}")
-                                    cov_raster[cluster_raster == i] = coverage_ratio  
-                                    outside_points = ref_sites_pca[outside_mask]
-                                    outside_indices = ref_indices[outside_mask]
+        try:
+            if ~np.isnan(i):
+                print('')
+                print('Pass '+str(pass_no))
+                print(f"Processing class {i}")
+                
+                existing_samples = sum(pts_updated['class_kmeans'] == i)
+                target_locs = (cluster_raster == i) & (gdm_raster_mask)
+                ref_locs = (cluster_raster == i) & (ref_ras == pass_no) & (gdm_raster_mask)
+                rows, cols = np.where(target_locs)
+                ref_rows, ref_cols = np.where(ref_locs)
+                ref_indices = np.column_stack((ref_rows, ref_cols))
     
-                                    print(f"Candidate sites: {outside_mask.shape[0]}")
-                                    print(f"Points outside convex hull: {outside_points.shape[0]}")
-                                    
-                                    if outside_points.shape[0] > 0:
-                                        new_sites_geo = [ref_trans * (col, row) for row, col in outside_indices]
-                                        #candidate points outside min distance with existing sites
-                                        global_distances, _ = global_tree.query(new_sites_geo)
-                                        new_sites=np.array(new_sites_geo)[global_distances>min_distance]
-                                        if len(new_sites)>0:
-                                            #this is to avoid kdtree calculations that are unnecessarily large
-                                            if len(new_sites)>maxkd:
-                                                new_sites = new_sites[np.random.choice(new_sites.shape[0], size=maxkd, replace=False)]
-                                            #initial distance filter to try to maximise distance between points
-                                            mmd_batch=max(int(len(new_sites)*simplifier), 1)
-                                            max_it=int((len(new_sites)/mmd_batch)*1.1)
-                                            new_sites_filt=maximize_min_distance(new_sites, min_distance, mmd_batch, max_iterations=max_it)
-                                            print(f"Points meeting distance criteria: {new_sites_filt.shape[0]}")
-                                            if len(new_sites_filt)>0:
-                                                #process batches, building the kdtree
-                                                #re-evaluate the convex hull
-                                                batches = [new_sites_filt[i:i + batch_size] for i in range(0, len(new_sites_filt), batch_size)]
-                                                pts_new=[]
-                                                new_coverage_ratio=coverage_ratio
-                                                counter=0
-                                                #batch=batches[0]
-                                                for batch in batches:
-                                                    if (new_coverage_ratio < cov_threshold):
-                                                        counter=counter+1
-                                                        #add if still outside hull
-                                                        batch_rowcols = [rowcol(ref_trans, x, y) for x, y in batch]
-                                                        batch_gdm = np.array([gdm_raster[row, col, :] for row, col in batch_rowcols])
-                                                        # Create a list of valid row-col indices where the data is not NaN
-                                                        nan_mask = np.array([~np.any(np.isnan(gdm_raster[row, col, :])) for row, col in batch_rowcols])
-                                                        batch_gdm=batch_gdm[nan_mask]
-                                                        batch_filt_pca = pca.transform(batch_gdm)
-                                                        #outside_mask = points_outside_hull(combined_hull, batch_filt_pca)
-                                                        outside_mask, min_distances = points_and_distance_outside_hull(expanded_combined_hull, batch_filt_pca)
-                                                        outside_mask=outside_mask & (min_distances>np.nanpercentile(min_distances[outside_mask], 50)) 
-                                                        outside_points = batch_filt_pca[outside_mask]
-                                                        outside_indices = np.array(batch)[nan_mask][outside_mask]
-                                                        batch_new=[tuple(coord) for coord in outside_indices]
-                                                        print('Batch '+str(counter)+' - '+str(len(batch_new))+' still outside hull')
-                                                        #add pts in batch outside of convex hull
-                                                        pts_coords.extend(batch_new)
-                                                        pts_new.extend(batch_new)
-                                                        #calculate new %volume
-                                                        new_sites_rowcols = [rowcol(ref_trans, x, y) for x, y in pts_coords]
-                                                        new_sites_gdm = np.array([gdm_raster[row, col, :] for row, col in new_sites_rowcols])
-                                                        new_sites_filt_pca = pca.transform(new_sites_gdm)
-                                                        if len(remove_outliers(new_sites_filt_pca, 99))>6:
-                                                            combined_hull = ConvexHull(remove_outliers(new_sites_filt_pca, 99))
-                                                            centroid = np.mean(new_sites_filt_pca, axis=0)                                 
-                                                            expanded_new_sites_filt_pca = centroid + (new_sites_filt_pca - centroid) * scale_factor
-                                                            expanded_combined_hull=ConvexHull(remove_outliers(expanded_new_sites_filt_pca, 99))
-                                                        combined_hull_volume = combined_hull.volume
-                                                        new_coverage_ratio = combined_hull_volume / candidate_hull_volume
-                                                    else:
-                                                        print('Already reached target coverage')
-                                                new_df = pd.DataFrame(pts_new, columns=['longitude', 'latitude'])
-                                                new_df['source'] = ref_fn.split('\\')[-1]
-                                                new_df['class_kmeans'] = i
-                                                new_gdf = gpd.GeoDataFrame(new_df, 
-                                                                       geometry=gpd.points_from_xy(new_df['longitude'], new_df['latitude']),
-                                                                       crs='EPSG:3577') 
-                                                print('Adding '+str(len(new_gdf))+' points')
-                                                print('New coverage: '+str(new_coverage_ratio*100)[0:4]+'%')
-                                                pts_updated = pd.concat([pts_updated, new_gdf[['source', 'class_kmeans', 'geometry']]], ignore_index=True)
-                                                #update global tree
-                                                global_tree = KDTree([geom.coords[0] for geom in pts_updated.geometry.to_crs("EPSG:3577")])    
-                                        else:
-                                            print('No sites matching distance criteria')
-                                    else:
-                                        print('No sites outside of existing hull')
+                if len(ref_rows) > 0:
+                    print(f"Pixels available for sampling: {ref_rows.size}")
+                    # Extract point coordinates
+                    pts_coords = [(geom.x, geom.y) for geom in pts_updated[pts_updated['class_kmeans']==i].geometry]
+                    rowcols = [rowcol(ref_trans, x, y) for x, y in pts_coords]
+                    existing_sites_gdm = np.array([gdm_raster[row, col, :] for row, col in rowcols])
+                    candidate_sites_gdm = gdm_raster[target_locs, :]
+                    ref_sites = gdm_raster[ref_locs, :]
+                    #~15 sites min to generate hull after outlier removal
+                    if (existing_sites_gdm.shape[0] > 15) & (len(ref_sites)>1):
+                        existing_sites_pca = pca.transform(existing_sites_gdm)  
+                        candidate_sites_pca = pca.transform(candidate_sites_gdm)  
+                        ref_sites_pca = pca.transform(ref_sites)
+                        if len(candidate_sites_pca)>500000:
+                            candidate_sites_pca = candidate_sites_pca[np.random.choice(candidate_sites_pca.shape[0], size=500000, replace=False)]
+                        existing_hull_volume = convex_hull_volume(existing_sites_pca, 99)
+                        candidate_hull_volume = convex_hull_volume(candidate_sites_pca, 99)
+                        #expand the hull of current sites by 10% volume to capture more diverse potential new sites
+                        d = existing_sites_pca.shape[1]  # number of dimensions
+                        centroid = np.mean(existing_sites_pca, axis=0)                                 
+                        scale_factor = (sfactor) ** (1 / d)
+                        expanded_existing_sites_pca = centroid + (existing_sites_pca - centroid) * scale_factor
+                        hull = ConvexHull(remove_outliers(expanded_existing_sites_pca, 99))
+                        outside_mask = points_outside_hull(hull, ref_sites_pca)
+                        #initialise the combined hull, which gets updated in batch for loop
+                        #combined hull serves volume comparisons
+                        #expanded hull makes sure that truly outside-hull points are added
+                        combined_hull=hull  
+                        expanded_combined_hull=hull
+                        if candidate_hull_volume > 0:
+                            coverage_ratio = existing_hull_volume / candidate_hull_volume
+                            print(f"Coverage ratio: {coverage_ratio:.2%}")
+                            cov_raster[cluster_raster == i] = coverage_ratio  
+                            outside_points = ref_sites_pca[outside_mask]
+                            outside_indices = ref_indices[outside_mask]
+    
+                            print(f"Candidate sites: {outside_mask.shape[0]}")
+                            print(f"Points outside convex hull: {outside_points.shape[0]}")
+                            
+                            if outside_points.shape[0] > 0:
+                                new_sites_geo = [ref_trans * (col, row) for row, col in outside_indices]
+                                #candidate points outside min distance with existing sites
+                                global_distances, _ = global_tree.query(new_sites_geo)
+                                new_sites=np.array(new_sites_geo)[global_distances>min_distance]
+                                if len(new_sites)>0:
+                                    #this is to avoid kdtree calculations that are unnecessarily large
+                                    if len(new_sites)>maxkd:
+                                        new_sites = new_sites[np.random.choice(new_sites.shape[0], size=maxkd, replace=False)]
+                                    #initial distance filter to try to maximise distance between points
+                                    mmd_batch=max(int(len(new_sites)*simplifier), 1)
+                                    max_it=int((len(new_sites)/mmd_batch)*1.1)
+                                    new_sites_filt=maximize_min_distance(new_sites, min_distance, mmd_batch, max_iterations=max_it)
+                                    print(f"Points meeting distance criteria: {new_sites_filt.shape[0]}")
+                                    if len(new_sites_filt)>0:
+                                        #process batches, building the kdtree
+                                        #re-evaluate the convex hull
+                                        #len(new_sites_filt_geo)
+                                        batches = [new_sites_filt[i:i + batch_size] for i in range(0, len(new_sites_filt), batch_size)]
+                                        pts_new=[]
+                                        new_coverage_ratio=coverage_ratio
+                                        counter=0
+                                        for batch in batches:
+                                            if (new_coverage_ratio < cov_threshold):
+                                                counter=counter+1
+                                                #add if still outside hull
+                                                batch_rowcols = [rowcol(ref_trans, x, y) for x, y in batch]
+                                                batch_gdm = np.array([gdm_raster[row, col, :] for row, col in batch_rowcols])
+                                                # Create a list of valid row-col indices where the data is not NaN
+                                                nan_mask = np.array([~np.any(np.isnan(gdm_raster[row, col, :])) for row, col in batch_rowcols])
+                                                batch_gdm=batch_gdm[nan_mask]
+                                                batch_filt_pca = pca.transform(batch_gdm)
+                                                #outside_mask = points_outside_hull(combined_hull, batch_filt_pca)
+                                                outside_mask, min_distances = points_and_distance_outside_hull(expanded_combined_hull, batch_filt_pca)
+                                                outside_mask=outside_mask & (min_distances>np.nanpercentile(min_distances[outside_mask], distpa)) 
+                                                outside_points = batch_filt_pca[outside_mask]
+                                                outside_indices = np.array(batch)[nan_mask][outside_mask]
+                                                batch_new=[tuple(coord) for coord in outside_indices]
+                                                print('Batch '+str(counter)+' - '+str(len(batch_new))+' still outside hull')
+                                                #add pts in batch outside of convex hull
+                                                pts_coords.extend(batch_new)
+                                                pts_new.extend(batch_new)
+                                                #calculate new %volume
+                                                new_sites_rowcols = [rowcol(ref_trans, x, y) for x, y in pts_coords]
+                                                new_sites_gdm = np.array([gdm_raster[row, col, :] for row, col in new_sites_rowcols])
+                                                new_sites_filt_pca = pca.transform(new_sites_gdm)
+                                                if len(remove_outliers(new_sites_filt_pca, 99))>6:
+                                                    combined_hull = ConvexHull(remove_outliers(new_sites_filt_pca, 99))
+                                                    centroid = np.mean(new_sites_filt_pca, axis=0)                                 
+                                                    expanded_new_sites_filt_pca = centroid + (new_sites_filt_pca - centroid) * scale_factor
+                                                    expanded_combined_hull=ConvexHull(remove_outliers(expanded_new_sites_filt_pca, 99))
+                                                combined_hull_volume = combined_hull.volume
+                                                new_coverage_ratio = combined_hull_volume / candidate_hull_volume
+                                            else:
+                                                print('Already reached target coverage')
+                                        new_df = pd.DataFrame(pts_new, columns=['longitude', 'latitude'])
+                                        new_df['source'] = pass_no
+                                        new_df['class_kmeans'] = i
+                                        new_gdf = gpd.GeoDataFrame(new_df, 
+                                                               geometry=gpd.points_from_xy(new_df['longitude'], new_df['latitude']),
+                                                               crs='EPSG:3577') 
+                                        print('Adding '+str(len(new_gdf))+' points')
+                                        print('New coverage: '+str(new_coverage_ratio*100)[0:4]+'%')
+                                        pts_updated = pd.concat([pts_updated, new_gdf[['source', 'class_kmeans', 'geometry']]], ignore_index=True)
+                                        #update global tree
+                                        global_tree = KDTree([geom.coords[0] for geom in pts_updated.geometry.to_crs("EPSG:3577")])    
+                                else:
+                                    print('No sites matching distance criteria')
                             else:
-                                print('No reference sites to choose from')
-            else:
-                print('No reference sites available at level '+str(pass_no))
-        #except:
-        #    print('Error')
-        #    error_log.append([pass_no, i])
+                                print('No sites outside of existing hull')
+                        else:
+                            print('No reference sites to choose from')
+                    else:
+                        print('Not enough existing sites to generate hull')
+                        #not enough existing points to calculate a hull
+                        #add a few points to get it going
+                        new_sites_geo = [ref_trans * (col, row) for row, col in ref_indices]
+                        if len(new_sites_geo)>5000:
+                            new_sites_geo = np.array(new_sites_geo)[np.random.choice(len(new_sites_geo), size=5000, replace=False)]
+                        #candidate points outside min distance with existing sites
+                        global_distances, _ = global_tree.query(new_sites_geo)
+                        new_sites=np.array(new_sites_geo)[global_distances>min_distance]
+                        if len(new_sites)>0:
+                            mmd_batch=max(int(len(new_sites)*simplifier), 1)
+                            max_it=int((len(new_sites)/mmd_batch)*1.1)
+                            new_sites_filt=maximize_min_distance(new_sites, min_distance, mmd_batch, max_iterations=max_it)
+                            print(f"Points meeting distance criteria: {new_sites_filt.shape[0]}")
+                            if len(new_sites_filt)>0:
+                                new_sites_filt_geo = new_sites_filt[np.random.choice(len(new_sites_filt), size=min(len(new_sites_filt), start_seed), replace=False)]
+                                #check nan in new sites
+                                rowcols_check = [rowcol(ref_trans, x, y) for x, y in new_sites_filt_geo]
+                                nan_mask = np.array([~np.any(np.isnan(gdm_raster[row, col, :])) for row, col in rowcols_check])
+                                new_sites_filt_geo = new_sites_filt_geo[nan_mask]
+                                new_df = pd.DataFrame(new_sites_filt_geo, columns=['longitude', 'latitude'])
+                                new_df['source'] = pass_no
+                                new_df['class_kmeans'] = i
+                                new_gdf = gpd.GeoDataFrame(new_df, 
+                                                       geometry=gpd.points_from_xy(new_df['longitude'], new_df['latitude']),
+                                                       crs='EPSG:3577') 
+                                print('Adding '+str(len(new_gdf))+' points')
+                                pts_updated = pd.concat([pts_updated, new_gdf[['source', 'class_kmeans', 'geometry']]], ignore_index=True)
+                                #update global tree
+                                global_tree = KDTree([geom.coords[0] for geom in pts_updated.geometry.to_crs("EPSG:3577")])
+                                
+                                #run again
+                                if len(new_sites_filt)>15:
+                                    pts_coords = [(geom.x, geom.y) for geom in pts_updated[pts_updated['class_kmeans']==i].geometry]
+                                    rowcols = [rowcol(ref_trans, x, y) for x, y in pts_coords]
+                                    existing_sites_gdm = np.array([gdm_raster[row, col, :] for row, col in rowcols])
+                                    candidate_sites_gdm = gdm_raster[target_locs, :]
+                                    ref_sites = gdm_raster[ref_locs, :]
+                                    existing_sites_pca = pca.transform(existing_sites_gdm)  
+                                    candidate_sites_pca = pca.transform(candidate_sites_gdm)  
+                                    ref_sites_pca = pca.transform(ref_sites)
+                                    ref_indices = np.column_stack((ref_rows, ref_cols))
+                                    if len(candidate_sites_pca)>500000:
+                                        candidate_sites_pca = candidate_sites_pca[np.random.choice(candidate_sites_pca.shape[0], size=500000, replace=False)]
+                                    existing_hull_volume = convex_hull_volume(existing_sites_pca, 99)
+                                    candidate_hull_volume = convex_hull_volume(candidate_sites_pca, 99)
+                                    #expand the hull of current sites by 10% volume to capture more diverse potential new sites
+                                    d = existing_sites_pca.shape[1]  # number of dimensions
+                                    centroid = np.mean(existing_sites_pca, axis=0)                                 
+                                    scale_factor = (sfactor) ** (1 / d)
+                                    expanded_existing_sites_pca = centroid + (existing_sites_pca - centroid) * scale_factor
+                                    hull = ConvexHull(remove_outliers(expanded_existing_sites_pca, 99))
+                                    outside_mask = points_outside_hull(hull, ref_sites_pca)
+                                    #initialise the combined hull, which gets updated in batch for loop
+                                    #combined hull serves volume comparisons
+                                    #expanded hull makes sure that truly outside-hull points are added
+                                    combined_hull=hull  
+                                    expanded_combined_hull=hull                
+                                    if candidate_hull_volume > 0:
+                                        coverage_ratio = existing_hull_volume / candidate_hull_volume
+                                        print(f"Coverage ratio: {coverage_ratio:.2%}")
+                                        cov_raster[cluster_raster == i] = coverage_ratio  
+                                        outside_points = ref_sites_pca[outside_mask]
+                                        outside_indices = ref_indices[outside_mask]
+        
+                                        print(f"Candidate sites: {outside_mask.shape[0]}")
+                                        print(f"Points outside convex hull: {outside_points.shape[0]}")
+                                        
+                                        if outside_points.shape[0] > 0:
+                                            new_sites_geo = [ref_trans * (col, row) for row, col in outside_indices]
+                                            #candidate points outside min distance with existing sites
+                                            global_distances, _ = global_tree.query(new_sites_geo)
+                                            new_sites=np.array(new_sites_geo)[global_distances>min_distance]
+                                            if len(new_sites)>0:
+                                                #this is to avoid kdtree calculations that are unnecessarily large
+                                                if len(new_sites)>maxkd:
+                                                    new_sites = new_sites[np.random.choice(new_sites.shape[0], size=maxkd, replace=False)]
+                                                #initial distance filter to try to maximise distance between points
+                                                mmd_batch=max(int(len(new_sites)*simplifier), 1)
+                                                max_it=int((len(new_sites)/mmd_batch)*1.1)
+                                                new_sites_filt=maximize_min_distance(new_sites, min_distance, mmd_batch, max_iterations=max_it)
+                                                print(f"Points meeting distance criteria: {new_sites_filt.shape[0]}")
+                                                if len(new_sites_filt)>0:
+                                                    #process batches, building the kdtree
+                                                    #re-evaluate the convex hull
+                                                    batches = [new_sites_filt[i:i + batch_size] for i in range(0, len(new_sites_filt), batch_size)]
+                                                    pts_new=[]
+                                                    new_coverage_ratio=coverage_ratio
+                                                    counter=0
+                                                    #batch=batches[0]
+                                                    for batch in batches:
+                                                        if (new_coverage_ratio < cov_threshold):
+                                                            counter=counter+1
+                                                            #add if still outside hull
+                                                            batch_rowcols = [rowcol(ref_trans, x, y) for x, y in batch]
+                                                            batch_gdm = np.array([gdm_raster[row, col, :] for row, col in batch_rowcols])
+                                                            # Create a list of valid row-col indices where the data is not NaN
+                                                            nan_mask = np.array([~np.any(np.isnan(gdm_raster[row, col, :])) for row, col in batch_rowcols])
+                                                            batch_gdm=batch_gdm[nan_mask]
+                                                            batch_filt_pca = pca.transform(batch_gdm)
+                                                            #outside_mask = points_outside_hull(combined_hull, batch_filt_pca)
+                                                            outside_mask, min_distances = points_and_distance_outside_hull(expanded_combined_hull, batch_filt_pca)
+                                                            outside_mask=outside_mask & (min_distances>np.nanpercentile(min_distances[outside_mask], distpa)) 
+                                                            outside_points = batch_filt_pca[outside_mask]
+                                                            outside_indices = np.array(batch)[nan_mask][outside_mask]
+                                                            batch_new=[tuple(coord) for coord in outside_indices]
+                                                            print('Batch '+str(counter)+' - '+str(len(batch_new))+' still outside hull')
+                                                            #add pts in batch outside of convex hull
+                                                            pts_coords.extend(batch_new)
+                                                            pts_new.extend(batch_new)
+                                                            #calculate new %volume
+                                                            new_sites_rowcols = [rowcol(ref_trans, x, y) for x, y in pts_coords]
+                                                            new_sites_gdm = np.array([gdm_raster[row, col, :] for row, col in new_sites_rowcols])
+                                                            new_sites_filt_pca = pca.transform(new_sites_gdm)
+                                                            if len(remove_outliers(new_sites_filt_pca, 99))>6:
+                                                                combined_hull = ConvexHull(remove_outliers(new_sites_filt_pca, 99))
+                                                                centroid = np.mean(new_sites_filt_pca, axis=0)                                 
+                                                                expanded_new_sites_filt_pca = centroid + (new_sites_filt_pca - centroid) * scale_factor
+                                                                expanded_combined_hull=ConvexHull(remove_outliers(expanded_new_sites_filt_pca, 99))
+                                                            combined_hull_volume = combined_hull.volume
+                                                            new_coverage_ratio = combined_hull_volume / candidate_hull_volume
+                                                        else:
+                                                            print('Already reached target coverage')
+                                                    new_df = pd.DataFrame(pts_new, columns=['longitude', 'latitude'])
+                                                    new_df['source'] = pass_no
+                                                    new_df['class_kmeans'] = i
+                                                    new_gdf = gpd.GeoDataFrame(new_df, 
+                                                                           geometry=gpd.points_from_xy(new_df['longitude'], new_df['latitude']),
+                                                                           crs='EPSG:3577') 
+                                                    print('Adding '+str(len(new_gdf))+' points')
+                                                    print('New coverage: '+str(new_coverage_ratio*100)[0:4]+'%')
+                                                    pts_updated = pd.concat([pts_updated, new_gdf[['source', 'class_kmeans', 'geometry']]], ignore_index=True)
+                                                    #update global tree
+                                                    global_tree = KDTree([geom.coords[0] for geom in pts_updated.geometry.to_crs("EPSG:3577")])    
+                                            else:
+                                                print('No sites matching distance criteria')
+                                        else:
+                                            print('No sites outside of existing hull')
+                                else:
+                                    print('No reference sites to choose from')
+                else:
+                    print('No reference sites available at level '+str(pass_no))
+        except:
+            print('Error')
+            error_log.append([pass_no, i])
 
 #%%
 
@@ -517,8 +552,14 @@ for pass_no in pass_nos:
 Export
 """
 
+vno='v1'
+sfac=str(int(sfactor*100))
+cthr=str(int(cov_threshold*100))
+mindi=str(int(min_distance/1000))
+diststr=str(distpa)
+
 print('Number of reference points: '+str(len(pts_updated)))
-pts_updated.to_file(out_dir+'pts_updated_250m_v1_1km_10volexp_90th.shp')
+pts_updated.to_file(out_dir+'pts_updated_250m_'+vno+'_'+mindi+'km_'+sfac+'volexp_'+diststr+'distp_'+cthr+'cov.shp')
 
 
 #%%

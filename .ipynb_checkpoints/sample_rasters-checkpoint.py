@@ -90,19 +90,6 @@ def sample_raster(raster_path, df, original_crs):
 
         return pd.DataFrame({raster_name: values})
 
-
-original_df = df.copy()
-tasks = [delayed(sample_raster)(raster_path, original_df, original_df.crs) for raster_path in fn_dirs]
-
-# Run the tasks in parallel (using 4 workers)
-results = compute(*tasks, scheduler='threads', num_workers=4)
-
-# Merge all sampled results into the original dataframe
-for partial_df in results:
-    original_df = pd.concat([original_df.reset_index(drop=True), partial_df.reset_index(drop=True)], axis=1)
-
-df = original_df  # Replace the old df
-
 # Loop through each raster and extract values at point locations
 for raster_path in fn_dirs:
     print(raster_path)
