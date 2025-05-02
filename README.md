@@ -22,8 +22,12 @@ Sample predictor and response valies for best-on-offer reference sites
 
 6. predict_BRT.py
 
-Train GBRT models for each response using the sampled datatable. Predict from these models using the standardised rasters. Export predicted best-on-offer reference layers.
+Train GBRT models for each response using the sampled datatable. Use DASK over tiles to predict from these models with standardised rasters. Export predicted best-on-offer reference layers.
 
-7. compute_condition.py
+7. mosaic_BRT
+
+Mosaic prediction tiles and export to single raster.
+
+8. compute_condition.py
 
 Use best-on-offer reference layers to calculate ecosystem integriy for each response, as a fcuntion of the departure between reference and contemporary layers.
