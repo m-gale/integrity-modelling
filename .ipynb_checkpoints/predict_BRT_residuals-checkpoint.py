@@ -41,6 +41,10 @@ from rasterio.enums import Resampling
 import gc
 import joblib
 import time
+import seaborn as sns
+import matplotlib.pyplot as plt
+from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.spatial.distance import squareform
 
 
 #%%
@@ -61,11 +65,10 @@ cluster_fn='cluster_raster46_s_simplified'
 
 #nci
 wdir='/g/data/xc0/project/natint/'
-#obs_path=wdir+'output/v1/sample_rasters/pts_updated_250m_v1_1km_25volexp_90th_sampled.csv'
-obs_path=wdir+'output/v1/sample_rasters/pts_updated_500m_v11_1kmspacing_20volexp_sampled_v1.csv'
-pred_csv_path=wdir+'input/predictors_described_v4.csv'
-resp_csv_path=wdir+'input/responses_described_v2.csv'
-outdir=wdir+'output/v1/predict_BRT'
+obs_path=wdir+'output/v2/sample_rasters/pts_updated_250m_v2_2km_175volexp_50distp_95cov_4pca_95out_sampled.csv'
+pred_csv_path=wdir+'input/predictors_described_v6.csv'
+resp_csv_path=wdir+'input/responses_described_v3.csv'
+outdir=wdir+'output/v2/predict_BRT'
 data_path='/scratch/xc0/mg5402/raster_subset_v3'
 tile_outdir=outdir+'/out_tiles'
 cluster_fn=wdir+'output/v1/gdm_kmeans/cluster_raster1_s_simplified.tif'
@@ -98,6 +101,41 @@ fns=[s for s in fn1 if '.tif' in s]
 fn_dirs=glob.glob(data_path+'/*.tif')
 
 print(str(len(fn_dirs))+' rasters for prediction')
+
+#%%
+
+"""
+Generate correlations between response variables
+Run residuals analysis on a set of uncorrelated variables
+"""
+
+df_resps=df[df['source']<=2]
+df_resps = df_resps[[col for col in resps['Response'].to_list() if col in df_resps.columns]]
+
+cor_matrix = df_resps.corr(method='spearman')
+
+plt.figure(figsize=(12, 10))
+sns.heatmap(cor_matrix, annot=True, fmt=".2f", cmap="coolwarm", square=True)
+plt.title("Correlation Matrix of Response Variables")
+plt.tight_layout()
+plt.show()
+
+# 1 - abs(correlation) as dissimilarity
+distance_matrix = 1 - abs(df_resps.corr())
+linkage_matrix = linkage(squareform(distance_matrix), method='average')
+
+# Choose number of clusters
+num_clusters = 5
+clusters = fcluster(linkage_matrix, num_clusters, criterion='maxclust')
+
+# Pick one representative from each cluster
+cluster_map = {}
+for var, cluster_id in zip(df_resps.columns, clusters):
+    cluster_map.setdefault(cluster_id, []).append(var)
+
+selected_vars = [vars_in_cluster[0] for vars_in_cluster in cluster_map.values()]
+print('Selected vars for residual analysis: ')
+print(selected_vars)
 
 #df=df.drop(['cluster_raster46_s_simplified'], axis=1)
 
@@ -348,22 +386,9 @@ Some corrections to input predictor/response vars and rasters as required, for n
 
 """
 
-target_cols = [
-    "AusEFlux_GPP_longterm_mean_NSW", "AusEFlux_GPP_month_of_max_NSW", "BS_PC_50", "Forest_height_2019_AUS",
-    "pcf_0-5", "pcf_5-10", "pcf_10-30", "h_peak_foliage_density", "NPV_PC_50", "OzWALD.LAI.AnnualMeans_NSW_clip",
-    "Veg_AVHRR_FPAR_StdDev", "Veg_NDVI_mean_Q1", "Veg_NDVI_mean_Q2", "Veg_NDVI_mean_Q3", "Veg_NDVI_mean_Q4",
-    "SOC_005_015_EV_N_P_AU_NAT_N_20220727", "PV_PC_50", "Veg_Persistant_green_Veg", "Veg_AVHRR_FPAR_Mean",
-    "sdev_2013-2024_mean_australia", "bcdev_2013-2024_mean_australia", "edev_2013-2024_mean_australia",
-    "agb_australia_90m", "bgb_australia_90m", "annual_range_eta_2013-2024", "mean_eta_autumn_2013-2024",
-    "mean_eta_summer_2013-2024", "month_of_max_eta_2013-2024", "month_of_min_eta_2013-2024",
-    "SOC_060_100_EV_N_P_AU_NAT_N_20220727", "CEC_005_015_EV_N_P_AU_TRN_N_20220826", "CEC_060_100_EV_N_P_AU_TRN_N_20220826"
-]
-
-
 # Replace 9999 and 99999 with NaN if column exists
-for col in target_cols:
-    if col in df.columns:
-        df[col] = df[col].replace([9999, 99999], np.nan)
+for col in df.columns:
+    df[col] = df[col].replace([9999, 99999], np.nan)
 
 # Handle Forest_height_2019_AUS separately
 if 'Forest_height_2019_AUS' in df.columns:
@@ -375,9 +400,8 @@ if 'FCOV30_total_2001-2023' in df.columns:
     df.loc[df['FCOV30_woody_2001-2023']==-9, 'FCOV30_woody_2001-2023'] = np.nan
     df.loc[df['FCOV30_grass_2001-2023']==-9, 'FCOV30_grass_2001-2023'] = np.nan
 
-
-#df[cluster_key] = df[cluster_key].astype("category")
-#cat_features = [cluster_key]
+df[cluster_key] = df[cluster_key].astype("category")
+cat_features = [cluster_key]
 
 #%%
 
@@ -443,14 +467,14 @@ tile_dir, tiles, gdf_tiles = generate_tile_index(gtiff_list, tile_outdir, tile_s
 # resp='Forest_height_2019_AUS'
 # resp='agb_australia_90m'
 # resp='AusEFlux_GPP_longterm_mean_NSW'
-resp='agb_australia_90m'
+# resp='agb_australia_90m'
 
 client = Client(n_workers=10)  # Creates a local Dask cluster
 print(client)
 
 #%%
 
-for resp in resps['Response']:
+for resp in selected_vars:
     
     print('')
     print(resp)
@@ -505,7 +529,7 @@ for resp in resps['Response']:
                 gbr = lgb.LGBMRegressor(objective="regression", alpha=0.5, **common_params)
                 #gbr = lgb.LGBMRegressor(objective="regeression", **common_params)
 
-            model_path=outdir_temp+'/'+resp+'_brt-model_older.joblib'
+            model_path=outdir_temp+'/'+resp+'_brt-model.joblib'
             if os.path.isfile(model_path) == False:
                 print('Training model...')
                 #all_models = gbr.fit(x_train, y_train, categorical_feature=cat_features)
