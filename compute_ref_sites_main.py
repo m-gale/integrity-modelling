@@ -12,11 +12,26 @@ To do:
 
 * remove more outliers from convex hull of ecotype calculation
 
-* adjust outlier threshold for three dimension convex hull
-
-* Re-run with smaller min dist for classes that don't reach threshold after full hierarchy?
-
 * to increase pts: lower expansion, higher threshold, stricter on outliers, remove 50th distance requirement
+
+* Sensitivity analysis:
+
+    PCs = [2, 3, 4]   (complexity of environmental space)
+    Outliers = [90, 95, 99]   (effect of outliers on 'sampled' environmental space)
+    Hull expansion = [10, 25, 50]   (hull boundary uncertainty and environmental novelty of new pts)
+    Min distance = [1000, 2000]   (spatial autocorrelation and preferential selection of distant points) 
+
+    = 54 combinations!
+    
+    1. Clip ecotypes to those intersecting NSW ...DONE
+    2. Compute ref sites x16 (for now)
+    3. Train models for ~36 RS vars
+    4. Sample ~60,000 NSW dataframe for environmental predictors
+    5. Predict on NSW dataframe
+    6. Model VI vs. 36 RS vars across parameters
+    7. Compare R2 across parameter combinations 
+
+    ... Use optimal parameters for national predictions.
 
 """
 
@@ -58,7 +73,12 @@ ref_dir='F:\\veg2_postdoc\\data\\reference\\National\\V1\\'
 
 #nci
 wdir='/g/data/xc0/project/natint/'
-out_dir=wdir+'output/v1/ref_sites/'
+out_diri=wdir+'output/v2'
+
+if os.path.exists(out_diri)==False:
+    os.mkdir(out_diri)
+    
+out_dir=wdir+'output/v2/ref_sites/'
 ref_dir=wdir+'input/compute_ref_sites/'
 
 if os.path.exists(out_dir)==False:
@@ -91,6 +111,8 @@ gdm_dir=wdir+'input/classify_gdm_kmeans_input/GDM_250m/'
 gdm_fns=glob.glob(gdm_dir+'*.tif')
 len(gdm_fns)
 
+#gdm_fns = [fn for fn in gdm_fns if 'GeoDist' not in fn]
+
 gdm_layers = []
 for fn in gdm_fns[:10]:  # take the first 10
     print(fn)
@@ -103,7 +125,7 @@ for fn in gdm_fns[:10]:  # take the first 10
             gdm_layers.append(src.read(1))
         
 # Convert list to 3D NumPy array (shape: height x width x 10)
-gdm_raster = np.stack(gdm_layers, axis=-1)  
+gdm_raster = np.stack(gdm_layers, axis=-1)  ♥
 gdm_raster[water_mask>0.5]=-9999
 del gdm_layers
 del water_mask
@@ -122,8 +144,8 @@ So the convex hull is calculated in five dimensions instead of 10
 
 """
 
-if os.path.isfile(out_dir+'pca_fit_3comp.joblib'):
-    pca=joblib.load(out_dir+'pca_fit_3comp.joblib')
+if os.path.isfile(out_dir+'pca_fit_4comp.joblib'):
+    pca=joblib.load(out_dir+'pca_fit_4comp.joblib')
 else:   
     # Reshape raster: (rows * cols, bands)
     print('Fitting PCA...')
@@ -140,26 +162,25 @@ else:
     gdm_sample = gdm_valid[sample_indices]
     
     # Fit PCA on the sampled data
-    pca = PCA(n_components=min(n_bands, 3))
+    pca = PCA(n_components=min(n_bands, 4))
     pca.fit(gdm_sample)  # Learn PCA components from sample
-    
-    del gdm_valid, gdm_sample, mask, gdm_2d
-    
+        
     gdm_pcs_valid = pca.transform(gdm_valid)
     n_pixels = gdm_2d.shape[0]
-    pc_full = np.full((n_pixels, 3), np.nan)
+    pc_full = np.full((n_pixels, 4), np.nan)
     pc_full[mask, :] = gdm_pcs_valid
     
+    del gdm_valid, gdm_sample, mask, gdm_2d
     del gdm_pcs_valid
 
-    pc_stack = pc_full.reshape((n_rows, n_cols, 3)).transpose((2, 0, 1))  # shape: (3, rows, cols)
+    pc_stack = pc_full.reshape((n_rows, n_cols, 4)).transpose((2, 0, 1))  # shape: (3, rows, cols)
     
     with rio.open(
-        out_dir+"gdm_pca_3comp.tif", "w",
+        out_dir+"gdm_pca_4comp.tif", "w",
         driver="GTiff",
         height=n_rows,
         width=n_cols,
-        count=3,
+        count=4,
         dtype=src.meta['dtype'],
         crs=src.meta['crs'],  # Replace with actual CRS
         transform=src.meta['transform'],
@@ -167,7 +188,8 @@ else:
     ) as dst:
         dst.write(pc_stack)
         
-    joblib.dump(pca, out_dir+'pca_fit_3comp.joblib')
+    joblib.dump(pca, out_dir+'pca_fit_4comp.joblib')
+    del pc_stack
     
 #%%
 
@@ -208,11 +230,11 @@ Run parameters
 start_seed=30
 
 #min distance between new points. will control no. sites
-min_distance = 1000  
+min_distance = 2000  
 
 #max convex hull volume overage proportion
 #will determine total no. sites and how well each class is environmentally represented
-cov_threshold=0.9
+cov_threshold=0.95
 
 #simplifier controls batch size for max min distance function, larger is more simple/faster
 #do not set above 0.05. very small numbers will revert to removing points one at a time
@@ -220,7 +242,7 @@ simplifier = 0.001
 
 #determines how much the existing sites hull is expanded to ensure that new sites are truly outside the existing hull
 #i.e., 1.1 expands by 10% overall volume, with equal expansion in all dimensions
-sfactor=1.5
+sfactor=1.75
 
 #determines how many potential new sites are run in maximise min distance function
 #more points take longer to run
@@ -229,7 +251,7 @@ maxkd=20000
 
 #take a percentile of candidate points of highest distance from existing points.
 #e.g., consider only the top half furthest points from existing points
-distpa=25
+distpa=50
 
 batch_size = 50
 
@@ -257,6 +279,8 @@ cuq=np.unique(cluster_raster)
 
 error_log=[]
 
+print('Ready')
+
 #%%
 
 """
@@ -273,7 +297,7 @@ for pass_no in pass_nos:
         
     #i=1
     cov_raster = np.full_like(cluster_raster, np.nan, dtype=np.float32)
-    for i in cuq:
+    for i in np.unique(cluster_raster):
         try:
             if ~np.isnan(i):
                 print('')
@@ -309,7 +333,7 @@ for pass_no in pass_nos:
                         centroid = np.mean(existing_sites_pca, axis=0)                                 
                         scale_factor = (sfactor) ** (1 / d)
                         expanded_existing_sites_pca = centroid + (existing_sites_pca - centroid) * scale_factor
-                        hull = ConvexHull(remove_outliers(expanded_existing_sites_pca, 99))
+                        hull = ConvexHull(remove_outliers(expanded_existing_sites_pca, 95))
                         outside_mask = points_outside_hull(hull, ref_sites_pca)
                         #initialise the combined hull, which gets updated in batch for loop
                         #combined hull serves volume comparisons
@@ -376,7 +400,7 @@ for pass_no in pass_nos:
                                                     combined_hull = ConvexHull(remove_outliers(new_sites_filt_pca, 99))
                                                     centroid = np.mean(new_sites_filt_pca, axis=0)                                 
                                                     expanded_new_sites_filt_pca = centroid + (new_sites_filt_pca - centroid) * scale_factor
-                                                    expanded_combined_hull=ConvexHull(remove_outliers(expanded_new_sites_filt_pca, 99))
+                                                    expanded_combined_hull=ConvexHull(remove_outliers(expanded_new_sites_filt_pca, 95))
                                                 combined_hull_volume = combined_hull.volume
                                                 new_coverage_ratio = combined_hull_volume / candidate_hull_volume
                                             else:
@@ -450,7 +474,7 @@ for pass_no in pass_nos:
                                     centroid = np.mean(existing_sites_pca, axis=0)                                 
                                     scale_factor = (sfactor) ** (1 / d)
                                     expanded_existing_sites_pca = centroid + (existing_sites_pca - centroid) * scale_factor
-                                    hull = ConvexHull(remove_outliers(expanded_existing_sites_pca, 99))
+                                    hull = ConvexHull(remove_outliers(expanded_existing_sites_pca, 95))
                                     outside_mask = points_outside_hull(hull, ref_sites_pca)
                                     #initialise the combined hull, which gets updated in batch for loop
                                     #combined hull serves volume comparisons
@@ -517,7 +541,7 @@ for pass_no in pass_nos:
                                                                 combined_hull = ConvexHull(remove_outliers(new_sites_filt_pca, 99))
                                                                 centroid = np.mean(new_sites_filt_pca, axis=0)                                 
                                                                 expanded_new_sites_filt_pca = centroid + (new_sites_filt_pca - centroid) * scale_factor
-                                                                expanded_combined_hull=ConvexHull(remove_outliers(expanded_new_sites_filt_pca, 99))
+                                                                expanded_combined_hull=ConvexHull(remove_outliers(expanded_new_sites_filt_pca, 95))
                                                             combined_hull_volume = combined_hull.volume
                                                             new_coverage_ratio = combined_hull_volume / candidate_hull_volume
                                                         else:
@@ -552,14 +576,16 @@ for pass_no in pass_nos:
 Export
 """
 
-vno='v1'
+vno='v2'
 sfac=str(int(sfactor*100))
 cthr=str(int(cov_threshold*100))
 mindi=str(int(min_distance/1000))
 diststr=str(distpa)
 
 print('Number of reference points: '+str(len(pts_updated)))
-pts_updated.to_file(out_dir+'pts_updated_250m_'+vno+'_'+mindi+'km_'+sfac+'volexp_'+diststr+'distp_'+cthr+'cov.shp')
+outfn=out_dir+'pts_updated_250m_'+vno+'_'+mindi+'km_'+sfac+'volexp_'+diststr+'distp_'+cthr+'cov_4pca_95out.shp'
+
+pts_updated.to_file(outfn)
 
 
 #%%
@@ -569,18 +595,79 @@ Average heirarchy per class
 
 """
 
-pts=gpd.read_file(scrap_dir+'pts_updated_500m_v11_1kmspacing_20volexp.shp')
+pts=gpd.read_file(outfn)
+                 
 cluster_new=np.empty(cluster_raster.shape)
-i=1
+#i=1
 for i in np.unique(cluster_raster):
-    sources=pts.loc[pts['class_pca']==i, 'source']
-    pass_numbers = sources.str.extract(r'pass(\d+)')[0].astype(int).tolist()
-    cluster_new[cluster_raster==i]=np.nanmean(pass_numbers)
+    print(str(i))
+    sources=pts.loc[pts['class_kmea']==i, 'source']
+    sources = pd.to_numeric(sources, errors='coerce')
+    average = sources.mean(skipna=True)
+    cluster_new[cluster_raster==i]=average
 
 meta=src.meta
-with rio.open(wdir+'scrap\\av_level.tif', "w", **meta) as dst:
+with rio.open(outfn.replace('.shp', '_av_heirarchy.tif'), "w", **meta) as dst:
     dst.write(cluster_new, 1)
     
+
+#%%
+
+"""
+Final coverage and count per ecotype
+
+"""
+
+cov_raster = np.full_like(cluster_raster, np.nan, dtype=np.float32)
+count_raster = np.full_like(cluster_raster, np.nan, dtype=np.float32)
+
+#i=368
+pts_updated=pts
+pass_no=1
+for i in np.unique(cluster_raster):
+    if ~np.isnan(i):
+        print('')
+        print(f"Processing class {i}")
+        
+        existing_samples = sum(pts_updated['class_kmea'] == i)
+        count_raster[cluster_raster == i] = existing_samples
+        target_locs = (cluster_raster == i) & (gdm_raster_mask)
+        ref_locs = (cluster_raster == i) & (ref_ras == pass_no) & (gdm_raster_mask)
+        rows, cols = np.where(target_locs)
+        ref_rows, ref_cols = np.where(ref_locs)
+        ref_indices = np.column_stack((ref_rows, ref_cols))
+
+        #if len(ref_rows) > 0:
+        print(f"Pixels available for sampling: {ref_rows.size}")
+        # Extract point coordinates
+        pts_coords = [(geom.x, geom.y) for geom in pts_updated[pts_updated['class_kmea']==i].geometry]
+        rowcols = [rowcol(ref_trans, x, y) for x, y in pts_coords]
+        existing_sites_gdm = np.array([gdm_raster[row, col, :] for row, col in rowcols])
+        candidate_sites_gdm = gdm_raster[target_locs, :]
+        ref_sites = gdm_raster[ref_locs, :]
+        #~15 sites min to generate hull after outlier removal
+        if (existing_sites_gdm.shape[0] > 15):
+            existing_sites_pca = pca.transform(existing_sites_gdm)  
+            candidate_sites_pca = pca.transform(candidate_sites_gdm)  
+            if len(candidate_sites_pca)>500000:
+                candidate_sites_pca = candidate_sites_pca[np.random.choice(candidate_sites_pca.shape[0], size=500000, replace=False)]
+            existing_hull_volume = convex_hull_volume(existing_sites_pca, 99)
+            candidate_hull_volume = convex_hull_volume(candidate_sites_pca, 99)
+            if candidate_hull_volume > 0:
+                coverage_ratio = existing_hull_volume / candidate_hull_volume
+                print(f"Coverage ratio: {coverage_ratio:.2%}")
+                cov_raster[cluster_raster == i] = coverage_ratio  
+
+        else:
+            print('Not enough existing sites to generate hull')
+            cov_raster[cluster_raster == i] = 0 
+
+meta=src.meta
+with rio.open(outfn.replace('.shp', '_coverage.tif'), "w", **meta) as dst:
+    dst.write(cov_raster, 1)
+
+with rio.open(outfn.replace('.shp', '_count.tif'), "w", **meta) as dst:
+    dst.write(count_raster, 1)
 
 #%%
 

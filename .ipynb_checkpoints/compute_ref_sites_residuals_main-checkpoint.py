@@ -47,23 +47,12 @@ from shapely import wkt
 
 #%%
 
+wdir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\'
+scrap_dir=wdir+'scrap\\'
 
-#nci
-wdir='/g/data/xc0/project/natint/'
-out_diri=wdir+'output/v2'
-
-if os.path.exists(out_diri)==False:
-    os.mkdir(out_diri)
-    
-out_dir=wdir+'output/v2/ref_sites/'
-ref_dir=wdir+'input/compute_ref_sites/'
-
-if os.path.exists(out_dir)==False:
-    os.mkdir(out_dir)
-    
 #integrity hierarchy layers
-ref_dirs=glob.glob(ref_dir+'*v2.tif')
-
+ref_dir='F:\\veg2_postdoc\\data\\reference\\National\\V1\\'
+ref_dirs=glob.glob(ref_dir+'*v1.tif')
 
 #residuals
 res_dir=scrap_dir+'agb_australia_90m_250m_national_loss_v2_500m.tif'
@@ -77,10 +66,9 @@ Load classes, pts
 """
 
 #ecotype classification
-cluster_dir=wdir+'output/v1/gdm_kmeans/cluster_raster1_s_simplified.tif'
+cluster_dir=scrap_dir+'cluster_raster46_s_simplified_500m.tif'
 with rio.open(cluster_dir) as src:
     cluster_raster=src.read(1)
-
 
 #%%
 """
