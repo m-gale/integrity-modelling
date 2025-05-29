@@ -41,23 +41,25 @@ from rasterio.enums import Resampling
 import gc
 import joblib
 import time
+import itertools
+
 
 
 #%%
 
 #local
-wdir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\'
+wdir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\scripts\\env1'
 #most recent reference site csv
-obs_path=wdir+'scrap\\pts_updated_500m_v11_1kmspacing_20volexp_residuals_sampled_v1.csv'
+obs_path=wdir+'\\pts_updated_250m_v2_2km_175volexp_50distp_95cov_4pca_95out_residuals_v2_sampled.csv'
 #predictor and response lists with pathnames
-pred_csv_path=wdir+'data\\predictors_described_v4.csv'
-resp_csv_path=wdir+'data\\responses_described_v2.csv'
-outdir = 'C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\scrap\\'
-tile_outdir = 'F:\\veg2_postdoc\\raster_subset_v3\\'
-#path with predictor and response rasters resampled to standard res, extent, CRS
+pred_csv_path=wdir+'\\predictors_described_v6.csv'
+resp_csv_path=wdir+'\\responses_described_v3.csv'
+outdir = wdir+'\\predict_BRT'
+tile_outdir = outdir+'\\out_tiles'
 data_path='F:\\veg2_postdoc\\raster_subset_v3'
 #cluster fn
-cluster_fn='cluster_raster46_s_simplified'
+cluster_fn=wdir+'cluster_raster1_s_simplified.tif'
+outdir_temp=outdir+'/models'
 
 #nci
 wdir='/g/data/xc0/project/natint/'
@@ -150,7 +152,10 @@ def standardise_ras(fn, fn_dir, resamp, outbnds, outdir_temp, outdir, res, r_mas
                 dest.write(ras, 1)
 
 cluster_key = cluster_fn.split('/')[-1].split('.tif')[0]
+#cluster_key='cluster_raster1_s_simplified'
 outfn1 = data_path + '/' + cluster_key + '.tif'
+#outfn1 = wdir + '/'+cluster_key + '.tif'
+
 if not os.path.isfile(outfn1):
     with rio.open(fn_dirs[0]) as src:
         outbnds = src.bounds
@@ -452,7 +457,7 @@ tile_dir, tiles, gdf_tiles = generate_tile_index(gtiff_list, tile_outdir, tile_s
 # resp='AusEFlux_GPP_longterm_mean_NSW'
 resp='wcf_wagb_90m_v2'
 
-client = Client(n_workers=20)  # Creates a local Dask cluster
+client = Client(n_workers=8)  # Creates a local Dask cluster
 print(client)
 
 #%%
@@ -535,11 +540,12 @@ for resp in resps['Response']:
                 print(importance_df[0:5])        
                 del all_models
             
+           
             #cross-validate
-            #print('Conducting fivefold CV...')
-            #obs_vs_pred=fivefold(common_params, x_train, y_train)
-            #obs_vs_pred.to_csv(outdir+'/'+resp+'_BRT_q'+'_'+obs_path.split('/')[-1].replace('.csv', '_v1.csv'))
-            #r2 = r2_score(obs_vs_pred['Observed'], obs_vs_pred['Predicted'])
+            # print('Conducting fivefold CV...')
+            # obs_vs_pred=fivefold(common_params, x_train, y_train)
+            # obs_vs_pred.to_csv(outdir+'/'+resp+'_BRT_q'+'_'+obs_path.split('/')[-1].replace('.csv', '_v1.csv'))
+            # r2 = r2_score(obs_vs_pred['Observed'], obs_vs_pred['Predicted'])
             #print(f"Overall R²: {r2:.4f}")
 
             #tiles=tiles[1000:1500]            
@@ -595,4 +601,116 @@ for resp in resps['Response']:
   
 
 #%%
+
+
+for resp in resps['Response']:
+    
+    print('')
+    print(resp)
+    if resp in df.keys():    
+        
+        df4=df.copy()
+        pred_list2=pred_list.copy()
+        
+        pred_list2.append(resp)
+        cv_all=df4[pred_list2]
+        
+        #check nan in cols
+        invalid_counts = df.isna().sum() + (df == -999).sum() + (df == -9999).sum()
+        invalid_percentage = (invalid_counts / len(df)) * 100
+        valid_columns = invalid_percentage[invalid_percentage <= 10].index.intersection(cv_all.columns)
+        cv_all = cv_all[valid_columns]
+                
+        cv_all=cv_all.dropna(axis=0)
+        print('NaN filtered - '+str(len(cv_all)))
+        
+        if resp in cv_all.keys():
+        
+            x_train=cv_all.drop(resp, axis=1)
+            y_train=np.ravel(cv_all[resp].values.reshape(-1, 1))
+            x_train_cols=x_train.columns
+            
+            print('Predictors: ')
+            print(list(x_train.keys()))
+            
+            #to overfit a little
+            common_params = dict(
+                learning_rate=0.06,
+                n_estimators=50,
+                max_depth=40,
+                num_leaves=256,
+                min_child_samples=5,
+                min_split_gain=0.1,
+                max_bin=512,
+                reg_alpha=0.1,
+                reg_lambda=0.5,
+                feature_fraction=0.9,
+                bagging_fraction=0.8,
+                bagging_freq=5,
+                verbosity=-1,
+                n_jobs=-1
+            )
+                        
+            if 'month' in resp:
+                gbr = lgb.LGBMClassifier(**common_params)
+            else:
+                #using quantile for future upper and lower confidence estimation
+                gbr = lgb.LGBMRegressor(objective="regression", alpha=0.5, **common_params)
+                #gbr = lgb.LGBMRegressor(objective="regeression", **common_params)
+
+            # model_path=outdir_temp+'/'+resp+'_brt-model.joblib'
+            # if os.path.isfile(model_path) == False:
+            #     print('Training model...')
+            #     all_models = gbr.fit(x_train, y_train, categorical_feature=cat_features)
+            #     #all_models = gbr.fit(x_train, y_train)
+                
+            #     imp = gbr.feature_importances_
+            #     importance_df = pd.DataFrame({
+            #         'Feature': x_train.columns, 
+            #         'Importance': imp
+            #         }).sort_values(by="Importance", ascending=False)
+            #     cat_levels = {}
+            #     for col in cat_features:
+            #         if col in x_train.columns:
+            #             if not pd.api.types.is_categorical_dtype(x_train[col]):
+            #                 x_train[col] = pd.Categorical(x_train[col])
+            #             cat_levels[col] = list(x_train[col].cat.categories)
+            #     joblib.dump((all_models, cat_levels), model_path)
+            #     print(f'Model saved to {model_path}')                
+            #     print('Most important predictors:')
+            #     print(importance_df[0:5])        
+            #     del all_models
+            
+            lr_vals   = [0.09, 0.12, 0.15]
+            md_vals   = [40]
+            nl_vals   = [512, 1024]
+            
+            cv_results = []            
+            for lr, md, nl in itertools.product(lr_vals, md_vals, nl_vals):
+                params = common_params.copy()
+                params.update({
+                    'learning_rate': lr,
+                    'max_depth': md,
+                    'num_leaves': nl
+                })
+                
+                print(f"Running CV with lr={lr}, max_depth={md}, num_leaves={nl}...")
+                obs_vs_pred = fivefold(params, x_train, y_train)
+
+                r2 = r2_score(obs_vs_pred['Observed'], obs_vs_pred['Predicted'])
+                print(f" → R² = {r2:.4f}\n")
+                
+                # 3d. Store results
+                cv_results.append({
+                    'learning_rate': lr,
+                    'max_depth': md,
+                    'num_leaves': nl,
+                    'r2': r2
+                })
+            
+            # 4. Convert to DataFrame and save
+            df_cv = pd.DataFrame(cv_results)
+            df_cv.to_csv(outdir + '/'+resp+'_cv_grid_search_results.csv', index=False)
+            
+            print("Grid search completed. Results written to cv_grid_search_results.csv")
 
