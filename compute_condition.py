@@ -23,7 +23,7 @@ outdir = 'C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\scrap\\'
 
 #nci
 wdir='/g/data/xc0/project/natint/'
-bench_dir=wdir+'output/v2/predict_BRT/out_tiles/tiled_50km/mosaic'
+bench_dir=wdir+'output/v2/predict_BRT/out_tiles/tiled_50km_mosaic'
 ext_dir='/scratch/xc0/mg5402/raster_subset_v3/'
 resp_csv_path=wdir+'input/responses_described_v3.csv'
 outdir=wdir+'output/v2/compute_condition'
@@ -45,6 +45,7 @@ print(os.listdir(bench_dir))
 #resp='Forest_height_2019_AUS'
 resp='agb_australia_90m'
 resp='Forest_height_2019_AUS'
+resp='wcf_wagb_90m_v2'
 #bench_fn=bench_dir+resp+'_250m_national_v2.tif'
 
 for resp in resps['Response']:

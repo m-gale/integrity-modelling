@@ -125,7 +125,7 @@ for fn in gdm_fns[:10]:  # take the first 10
             gdm_layers.append(src.read(1))
         
 # Convert list to 3D NumPy array (shape: height x width x 10)
-gdm_raster = np.stack(gdm_layers, axis=-1)  
+gdm_raster = np.stack(gdm_layers, axis=-1)  ♥
 gdm_raster[water_mask>0.5]=-9999
 del gdm_layers
 del water_mask
@@ -646,10 +646,9 @@ for i in np.unique(cluster_raster):
         candidate_sites_gdm = gdm_raster[target_locs, :]
         ref_sites = gdm_raster[ref_locs, :]
         #~15 sites min to generate hull after outlier removal
-        if (existing_sites_gdm.shape[0] > 15) & (len(ref_sites)>1):
+        if (existing_sites_gdm.shape[0] > 15):
             existing_sites_pca = pca.transform(existing_sites_gdm)  
             candidate_sites_pca = pca.transform(candidate_sites_gdm)  
-            ref_sites_pca = pca.transform(ref_sites)
             if len(candidate_sites_pca)>500000:
                 candidate_sites_pca = candidate_sites_pca[np.random.choice(candidate_sites_pca.shape[0], size=500000, replace=False)]
             existing_hull_volume = convex_hull_volume(existing_sites_pca, 99)

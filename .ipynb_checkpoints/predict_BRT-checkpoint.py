@@ -62,20 +62,23 @@ cluster_fn='cluster_raster46_s_simplified'
 #nci
 wdir='/g/data/xc0/project/natint/'
 #obs_path=wdir+'output/v1/sample_rasters/pts_updated_250m_v1_1km_25volexp_90th_sampled.csv'
-obs_path=wdir+'output/v1/sample_rasters/pts_updated_500m_v11_1kmspacing_20volexp_sampled_v1.csv'
-pred_csv_path=wdir+'input/predictors_described_v4.csv'
-resp_csv_path=wdir+'input/responses_described_v2.csv'
-outdir=wdir+'output/v1/predict_BRT'
+obs_path=wdir+'output/v2/sample_rasters/pts_updated_250m_v2_2km_175volexp_50distp_95cov_4pca_95out_residuals_v2_sampled.csv'
+pred_csv_path=wdir+'input/predictors_described_v6.csv'
+resp_csv_path=wdir+'input/responses_described_v3.csv'
+outdir=wdir+'output/v2/predict_BRT'
 data_path='/scratch/xc0/mg5402/raster_subset_v3'
 tile_outdir=outdir+'/out_tiles'
 cluster_fn=wdir+'output/v1/gdm_kmeans/cluster_raster1_s_simplified.tif'
-outdir_temp=wdir+'scrap'
+outdir_temp=outdir+'/models'
 
 if os.path.exists(outdir)==False:
     os.mkdir(outdir)
     
 if os.path.exists(tile_outdir)==False:
     os.mkdir(tile_outdir)
+
+if os.path.exists(outdir_temp)==False:
+    os.mkdir(outdir_temp)
 
 #%%
 
@@ -200,7 +203,7 @@ def process_tile(idx, window, filtered_gtiff_list, model_path, x_train_cols, cat
         #print('No data in tile')
         pred_q_reshape = np.full_like(tile_data, np.nan, dtype='float32')[0]
     else:
-        all_models = joblib.load(model_path)
+        all_models, cat_levels = joblib.load(model_path)
         #print('Loading rasters for tile...')
         for f in filtered_gtiff_list:
             with rio.open(f) as src:
@@ -223,9 +226,17 @@ def process_tile(idx, window, filtered_gtiff_list, model_path, x_train_cols, cat
         all_nan_mask = rstack_new.isna().any(axis=1)
 
         # Convert categorical features to category type
+        #for cat in cat_features:
+        #    if cat in rstack_new.columns:
+        #        rstack_new[cat] = rstack_new[cat].astype('category')
+
         for cat in cat_features:
             if cat in rstack_new.columns:
-                rstack_new[cat] = rstack_new[cat].astype('category')
+            # Use saved levels for consistency
+                categories = cat_levels.get(cat)
+                if categories:
+                    rstack_new[cat] = pd.Categorical(rstack_new[cat], categories=categories)
+
 
         #print('Predicting...')
         pred_q = all_models.booster_.predict(rstack_new, num_threads=-1)
@@ -348,26 +359,12 @@ Some corrections to input predictor/response vars and rasters as required, for n
 
 """
 
-target_cols = [
-    "AusEFlux_GPP_longterm_mean_NSW", "AusEFlux_GPP_month_of_max_NSW", "BS_PC_50", "Forest_height_2019_AUS",
-    "pcf_0-5", "pcf_5-10", "pcf_10-30", "h_peak_foliage_density", "NPV_PC_50", "OzWALD.LAI.AnnualMeans_NSW_clip",
-    "Veg_AVHRR_FPAR_StdDev", "Veg_NDVI_mean_Q1", "Veg_NDVI_mean_Q2", "Veg_NDVI_mean_Q3", "Veg_NDVI_mean_Q4",
-    "SOC_005_015_EV_N_P_AU_NAT_N_20220727", "PV_PC_50", "Veg_Persistant_green_Veg", "Veg_AVHRR_FPAR_Mean",
-    "sdev_2013-2024_mean_australia", "bcdev_2013-2024_mean_australia", "edev_2013-2024_mean_australia",
-    "agb_australia_90m", "bgb_australia_90m", "annual_range_eta_2013-2024", "mean_eta_autumn_2013-2024",
-    "mean_eta_summer_2013-2024", "month_of_max_eta_2013-2024", "month_of_min_eta_2013-2024",
-    "SOC_060_100_EV_N_P_AU_NAT_N_20220727", "CEC_005_015_EV_N_P_AU_TRN_N_20220826", "CEC_060_100_EV_N_P_AU_TRN_N_20220826"
-]
-
-
 # Replace 9999 and 99999 with NaN if column exists
-for col in target_cols:
-    if col in df.columns:
-        df[col] = df[col].replace([9999, 99999], np.nan)
+for col in df.columns:
+    df[col] = df[col].replace([9999, 99999], np.nan)
 
 # Handle Forest_height_2019_AUS separately
 if 'Forest_height_2019_AUS' in df.columns:
-    df.loc[df['Forest_height_2019_AUS'].isna(), 'Forest_height_2019_AUS'] = 0
     df.loc[df['Forest_height_2019_AUS'] > 90, 'Forest_height_2019_AUS'] = np.nan
 
 if 'FCOV30_total_2001-2023' in df.columns:
@@ -375,9 +372,14 @@ if 'FCOV30_total_2001-2023' in df.columns:
     df.loc[df['FCOV30_woody_2001-2023']==-9, 'FCOV30_woody_2001-2023'] = np.nan
     df.loc[df['FCOV30_grass_2001-2023']==-9, 'FCOV30_grass_2001-2023'] = np.nan
 
+if 'bs_pc_50_2013-2024_mean_australia' in df.columns:
+        df.loc[df['bs_pc_50_2013-2024_mean_australia']==255, 'bs_pc_50_2013-2024_mean_australia'] = np.nan
+        df.loc[df['npv_pc_50_2013-2024_mean_australia']==255, 'npv_pc_50_2013-2024_mean_australia'] = np.nan
+        df.loc[df['pv_pc_50_2013-2024_mean_australia']==255, 'pv_pc_50_2013-2024_mean_australia'] = np.nan
 
-#df[cluster_key] = df[cluster_key].astype("category")
-#cat_features = [cluster_key]
+df[cluster_key] = df[cluster_key].astype("category")
+df['PM_Lithol_Raster_from_Geol_SoilAtlas'] = df['PM_Lithol_Raster_from_Geol_SoilAtlas'].astype("category")
+cat_features = [cluster_key, 'PM_Lithol_Raster_from_Geol_SoilAtlas']
 
 #%%
 
@@ -391,42 +393,48 @@ cols_to_drop=['Phosphorus_oxide_prediction_median',
                        'SND_060_100_EV_N_P_AU_TRN_N_20210902',
                        'SLT_005_015_EV_N_P_AU_TRN_N_20210902',
                        'SLT_060_100_EV_N_P_AU_TRN_N_20210902',
-                       'PM_radmap_v4_2019_filtered_pctk_GAPFilled',
-                       'PM_radmap_v4_2019_filtered_ppmt_GAPFilled',
-                       'PM_radmap_v4_2019_filtered_ppmu_GAPFilled',
-                       'PM_radmap_v4_2019_ratio_tk_GAPFilled',
-                       'PM_radmap_v4_2019_ratio_u2t_GAPFilled',
-                       'PM_radmap_v4_2019_ratio_uk_GAPFilled',
+                       'PM_radmap_v4_2019_filtered_pctk_GAPFilled', #artefacts
+                       'PM_radmap_v4_2019_filtered_ppmt_GAPFilled', #artefacts
+                       'PM_radmap_v4_2019_filtered_ppmu_GAPFilled', #artefacts
+                       'PM_radmap_v4_2019_ratio_tk_GAPFilled', #artefacts
+                       'PM_radmap_v4_2019_ratio_u2t_GAPFilled', #artefacts
+                       'PM_radmap_v4_2019_ratio_uk_GAPFilled', #artefacts
                        'Soil_Illite',
                        'CLY_005_015_EV_N_P_AU_TRN_N_20210902', 
                        'CLY_060_100_EV_N_P_AU_TRN_N_20210902',
                        'NTO_005_015_EV_N_P_AU_NAT_C_20231101',
+                       'NTO_060_100_EV_N_P_AU_NAT_C_20231101',
                        'Phosphorus_oxide_prediction_median',
                        'Iron_oxide_prediction_median', 
                        'Magnesium_oxide_prediction_median', 
                        'Manganese_oxide_prediction_median',
-                       'Silica_oxide_prediction_median'
+                       'Silica_oxide_prediction_median',
                        'Soil_Kaolinite', 
                        'Soil_Smectite',
                        'PHW_005_015_EV_N_P_AU_TRN_N_20220520',
                        'PHW_060_100_95_N_P_AU_TRN_N_20220520',
-                       'Soil_Kaolinite',
                        'Silica_oxide_prediction_median',
                        'Potassium_oxide_prediction_median',
                        'AWC_005_015_EV_N_P_AU_TRN_N_20210614',
                        'Calcium_oxide_prediction_median',
-                       'AVP_060_100_EV_N_P_AU_TRN_N_20220826'
+                       'AVP_060_100_EV_N_P_AU_TRN_N_20220826',
+                       'Titanium_oxide_prediction_median',
+                       'Aluminium_oxide_prediction_median',
+                       'Sodium_oxide_prediction_median'
                        ]
         
 pred_list = [col for col in pred_list if col not in cols_to_drop]     
 print(str(len(df))+' points unfiltered')
+len(pred_list)
 
 #remove from gtiff list
 filtered_gtiff_list = [
     path for path in gtiff_list
     if not any(col in path for col in cols_to_drop)
 ]
-    
+
+len(filtered_gtiff_list)
+#sorted(filtered_gtiff_list)
 
 #%%
 
@@ -441,11 +449,10 @@ tile_dir, tiles, gdf_tiles = generate_tile_index(gtiff_list, tile_outdir, tile_s
 #%%
 
 # resp='Forest_height_2019_AUS'
-# resp='agb_australia_90m'
 # resp='AusEFlux_GPP_longterm_mean_NSW'
-resp='agb_australia_90m'
+resp='wcf_wagb_90m_v2'
 
-client = Client(n_workers=10)  # Creates a local Dask cluster
+client = Client(n_workers=20)  # Creates a local Dask cluster
 print(client)
 
 #%%
@@ -505,18 +512,24 @@ for resp in resps['Response']:
                 gbr = lgb.LGBMRegressor(objective="regression", alpha=0.5, **common_params)
                 #gbr = lgb.LGBMRegressor(objective="regeression", **common_params)
 
-            model_path=outdir_temp+'/'+resp+'_brt-model_older.joblib'
+            model_path=outdir_temp+'/'+resp+'_brt-model.joblib'
             if os.path.isfile(model_path) == False:
                 print('Training model...')
-                #all_models = gbr.fit(x_train, y_train, categorical_feature=cat_features)
-                all_models = gbr.fit(x_train, y_train)
+                all_models = gbr.fit(x_train, y_train, categorical_feature=cat_features)
+                #all_models = gbr.fit(x_train, y_train)
                 
                 imp = gbr.feature_importances_
                 importance_df = pd.DataFrame({
                     'Feature': x_train.columns, 
                     'Importance': imp
                     }).sort_values(by="Importance", ascending=False)
-                joblib.dump(all_models, model_path)
+                cat_levels = {}
+                for col in cat_features:
+                    if col in x_train.columns:
+                        if not pd.api.types.is_categorical_dtype(x_train[col]):
+                            x_train[col] = pd.Categorical(x_train[col])
+                        cat_levels[col] = list(x_train[col].cat.categories)
+                joblib.dump((all_models, cat_levels), model_path)
                 print(f'Model saved to {model_path}')                
                 print('Most important predictors:')
                 print(importance_df[0:5])        

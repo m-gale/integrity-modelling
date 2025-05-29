@@ -27,6 +27,10 @@ for f in fns_tot:
 print(resps)
 
 #resp='bs_pc_50_2013-2024_mean_australia'
+#resp='agb_australia_90m'
+resp='wcf_wagb_90m_v2'
+
+
 
 #%%
 
@@ -85,6 +89,6 @@ def merge_tiles(fns, resp, tile_outdir, residuals):
 for resp in resps:
     fns=glob.glob(tile_dir+'/*'+resp+'*.tif')
     print(f"{len(fns)} files found")
-    merge_tiles(fns, resp, tile_outdir, residuals=True)
+    merge_tiles(fns, resp, tile_outdir, residuals=False)
 
 #%%
