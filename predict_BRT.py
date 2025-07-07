@@ -42,6 +42,8 @@ import gc
 import joblib
 import time
 import itertools
+import datetime
+
 
 
 
@@ -56,10 +58,12 @@ pred_csv_path=wdir+'\\predictors_described_v6.csv'
 resp_csv_path=wdir+'\\responses_described_v3.csv'
 outdir = wdir+'\\predict_BRT'
 tile_outdir = outdir+'\\out_tiles'
-data_path='F:\\veg2_postdoc\\raster_subset_v3'
+data_path='D:\\veg2_postdoc\\raster_subset_v3'
 #cluster fn
 cluster_fn=wdir+'cluster_raster1_s_simplified.tif'
 outdir_temp=outdir+'/models'
+param_dir=outdir
+#vi_dir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\data\\bionet_truthing\\all_data_checkinclude_sampled.csv'
 
 #nci
 wdir='/g/data/xc0/project/natint/'
@@ -72,6 +76,7 @@ data_path='/scratch/xc0/mg5402/raster_subset_v3'
 tile_outdir=outdir+'/out_tiles'
 cluster_fn=wdir+'output/v1/gdm_kmeans/cluster_raster1_s_simplified.tif'
 outdir_temp=outdir+'/models'
+#####param_dir=
 
 if os.path.exists(outdir)==False:
     os.mkdir(outdir)
@@ -90,6 +95,15 @@ Read
 
 df=pd.read_csv(obs_path)
 print(df)
+
+#sum(df['source']==5)
+
+# vi=pd.read_csv(vi_dir)
+# for a in vi.keys():
+#     if ('raster_subset_v3' in a) | ('env1' in a):
+#         print(a)
+#         newa = os.path.basename(a)
+#         vi.rename(columns={a:newa}, inplace=True)
 
 preds=pd.read_csv(pred_csv_path)
 print(preds)
@@ -151,10 +165,10 @@ def standardise_ras(fn, fn_dir, resamp, outbnds, outdir_temp, outdir, res, r_mas
             with rio.open(outfn2, 'w', **meta) as dest:
                 dest.write(ras, 1)
 
-cluster_key = cluster_fn.split('/')[-1].split('.tif')[0]
-#cluster_key='cluster_raster1_s_simplified'
-outfn1 = data_path + '/' + cluster_key + '.tif'
-#outfn1 = wdir + '/'+cluster_key + '.tif'
+#cluster_key = cluster_fn.split('/')[-1].split('.tif')[0]
+cluster_key='cluster_raster1_s_simplified'
+#outfn1 = data_path + '/' + cluster_key + '.tif'
+outfn1 = wdir + '/'+cluster_key + '.tif'
 
 if not os.path.isfile(outfn1):
     with rio.open(fn_dirs[0]) as src:
@@ -219,8 +233,10 @@ def process_tile(idx, window, filtered_gtiff_list, model_path, x_train_cols, cat
         n, n_rows, n_cols, n_bands = rstack.shape
         #print(f"pred_list length: {len(pred_list)}")
         rstack_flat = rstack.reshape(n_rows * n_cols, n_bands)
+        
+        base_names = [os.path.splitext(os.path.basename(f))[0] for f in filtered_gtiff_list]
 
-        rstack_new = pd.DataFrame(rstack_flat, columns=pred_list)
+        rstack_new = pd.DataFrame(rstack_flat, columns=base_names)
 
         del rstack 
         del resampled_layers
@@ -229,7 +245,7 @@ def process_tile(idx, window, filtered_gtiff_list, model_path, x_train_cols, cat
         rstack_new = rstack_new[list(x_train_cols)]
         rstack_new = rstack_new.replace(9999, np.nan)
         all_nan_mask = rstack_new.isna().any(axis=1)
-
+      
         # Convert categorical features to category type
         #for cat in cat_features:
         #    if cat in rstack_new.columns:
@@ -242,10 +258,12 @@ def process_tile(idx, window, filtered_gtiff_list, model_path, x_train_cols, cat
                 if categories:
                     rstack_new[cat] = pd.Categorical(rstack_new[cat], categories=categories)
 
-
         #print('Predicting...')
         pred_q = all_models.booster_.predict(rstack_new, num_threads=-1)
-        #pred_q = all_models.predict(rstack_new)
+        #pred_q = gbr.booster_.predict(rstack_new, num_threads=-1)
+        #pred_q = gbr.booster_.predict(X_val_fold, num_threads=-1)
+
+        #pred_q2 = all_models.predict(rstack_new)
         pred_q[all_nan_mask] = np.nan
         pred_q_reshape = pred_q.reshape((n_rows, n_cols))
 
@@ -349,6 +367,7 @@ for a in df.keys()[4:]:
         print(a)
         if a in preds2:
             gtiff_list.append(data_path+'//'+a+'.tif')
+            #gtiff_list.append((data_path+'//'+a+'.tif').replace('D:\\', 'E:\\'))
             pred_list.append(a)
     else:           
             print('Error for '+a)
@@ -425,12 +444,12 @@ cols_to_drop=['Phosphorus_oxide_prediction_median',
                        'AVP_060_100_EV_N_P_AU_TRN_N_20220826',
                        'Titanium_oxide_prediction_median',
                        'Aluminium_oxide_prediction_median',
-                       'Sodium_oxide_prediction_median'
+                       'Sodium_oxide_prediction_median',
+                       'cluster_raster46_s_simplified'
                        ]
         
 pred_list = [col for col in pred_list if col not in cols_to_drop]     
 print(str(len(df))+' points unfiltered')
-len(pred_list)
 
 #remove from gtiff list
 filtered_gtiff_list = [
@@ -439,7 +458,13 @@ filtered_gtiff_list = [
 ]
 
 len(filtered_gtiff_list)
+len(pred_list)
 #sorted(filtered_gtiff_list)
+
+#remove duplicates
+pred_list.remove('cluster_raster1_s_simplified.1')
+filtered_gtiff_list=list(dict.fromkeys(filtered_gtiff_list))
+
 
 #%%
 
@@ -448,7 +473,7 @@ Initialise 500 km tiles so that i can run predict without loading all predictors
 
 """
 
-tile_dir, tiles, gdf_tiles = generate_tile_index(gtiff_list, tile_outdir, tile_size=50000)
+tile_dir, tiles, gdf_tiles = generate_tile_index(gtiff_list, tile_outdir, tile_size=250000)
 #gdf_tiles.to_file(outdir+'tile_index_'+str(int(tile_size/1000))+'_km_v2.shp')
 
 #%%
@@ -456,17 +481,45 @@ tile_dir, tiles, gdf_tiles = generate_tile_index(gtiff_list, tile_outdir, tile_s
 # resp='Forest_height_2019_AUS'
 # resp='AusEFlux_GPP_longterm_mean_NSW'
 resp='wcf_wagb_90m_v2'
+resp='bs_pc_50_2013-2024_mean_australia'
+resp='Veg_NDVI_mean_Q1'
 
-client = Client(n_workers=8)  # Creates a local Dask cluster
+client = Client(n_workers=2)  # Creates a local Dask cluster
 print(client)
+batch_size = 2
+
 
 #%%
 
-for resp in resps['Response']:
+
+keep =  [
+    "Forest_height_2019_AUS",
+    "wcf_wagb_90m_v2",
+    "FCOV30_woody_2001-2023",
+    "pcf_10-30",
+    "agb_australia_90m",
+    "Veg_NDVI_mean_Q2",
+    "wcf_2013_2023_mean_90m_v2",
+    "bgb_australia_90m",
+    "pcf_5-10",
+    "wcf_vegh_90m_v2",
+    "bcdev_2013-2024_mean_australia",
+    "pv_pc_50_2013-2024_mean_australia",
+    "Veg_NDVI_mean_Q1",
+    "pcf_0-5",
+    "h_peak_foliage_density",
+    "Veg_AVHRR_FPAR_StdDev",
+    "SOC_005_015_EV_N_P_AU_NAT_N_20220727",
+    "ER_2013-2024_mean",
+    "FCOV30_total_2001-2023",
+    "edev_2013-2024_mean_australia"
+]
+
+for resp in keep[6:8]:
     
     print('')
     print(resp)
-    if resp in df.keys():    
+    if resp in df.keys():
         
         df4=df.copy()
         pred_list2=pred_list.copy()
@@ -478,6 +531,8 @@ for resp in resps['Response']:
         invalid_counts = df.isna().sum() + (df == -999).sum() + (df == -9999).sum()
         invalid_percentage = (invalid_counts / len(df)) * 100
         valid_columns = invalid_percentage[invalid_percentage <= 10].index.intersection(cv_all.columns)
+        #len(valid_columns)
+        #len(cv_all.columns)
         cv_all = cv_all[valid_columns]
                 
         cv_all=cv_all.dropna(axis=0)
@@ -510,46 +565,66 @@ for resp in resps['Response']:
                 n_jobs=-1
             )
                         
-            if 'month' in resp:
-                gbr = lgb.LGBMClassifier(**common_params)
-            else:
-                #using quantile for future upper and lower confidence estimation
-                gbr = lgb.LGBMRegressor(objective="regression", alpha=0.5, **common_params)
-                #gbr = lgb.LGBMRegressor(objective="regeression", **common_params)
-
             model_path=outdir_temp+'/'+resp+'_brt-model.joblib'
             if os.path.isfile(model_path) == False:
                 print('Training model...')
-                all_models = gbr.fit(x_train, y_train, categorical_feature=cat_features)
-                #all_models = gbr.fit(x_train, y_train)
                 
-                imp = gbr.feature_importances_
-                importance_df = pd.DataFrame({
-                    'Feature': x_train.columns, 
-                    'Importance': imp
-                    }).sort_values(by="Importance", ascending=False)
-                cat_levels = {}
-                for col in cat_features:
-                    if col in x_train.columns:
-                        if not pd.api.types.is_categorical_dtype(x_train[col]):
-                            x_train[col] = pd.Categorical(x_train[col])
-                        cat_levels[col] = list(x_train[col].cat.categories)
-                joblib.dump((all_models, cat_levels), model_path)
-                print(f'Model saved to {model_path}')                
-                print('Most important predictors:')
-                print(importance_df[0:5])        
-                del all_models
+                param_fn=param_dir+'/'+resp+'_cv_grid_search_results.csv'
+                if os.path.isfile(param_fn):
+                    params=pd.read_csv(param_fn)
+                    best_params = params.loc[params['r2'].idxmax()]
+                    common_params = dict(
+                        learning_rate = best_params['learning_rate'],
+                        n_estimators = 1000,         # Keep as-is for final training
+                        max_depth = int(best_params['max_depth']),
+                        num_leaves = int(best_params['num_leaves']),
+                        min_child_samples = 5,
+                        min_split_gain = 0.1,
+                        max_bin = 512,
+                        reg_alpha = 0.1,
+                        reg_lambda = 0.5,
+                        feature_fraction = 0.9,
+                        bagging_fraction = 0.8,
+                        bagging_freq = 5,
+                        verbosity = -1,
+                        n_jobs = -1
+                    )
+                    
+                    if 'month' in resp:
+                        gbr = lgb.LGBMClassifier(**common_params)
+                    else:
+                        #using quantile for future upper and lower confidence estimation
+                        gbr = lgb.LGBMRegressor(objective="regression",  **common_params)
+                        #gbr = lgb.LGBMRegressor(objective="quantile", alpha=0.5, **common_params)
             
-           
-            #cross-validate
-            # print('Conducting fivefold CV...')
-            # obs_vs_pred=fivefold(common_params, x_train, y_train)
-            # obs_vs_pred.to_csv(outdir+'/'+resp+'_BRT_q'+'_'+obs_path.split('/')[-1].replace('.csv', '_v1.csv'))
-            # r2 = r2_score(obs_vs_pred['Observed'], obs_vs_pred['Predicted'])
-            #print(f"Overall R²: {r2:.4f}")
-
+                    all_models = gbr.fit(x_train, y_train, categorical_feature=cat_features)
+                    #all_models = gbr.fit(x_train, y_train)
+                    
+                    imp = gbr.feature_importances_
+                    importance_df = pd.DataFrame({
+                        'Feature': x_train.columns, 
+                        'Importance': imp
+                        }).sort_values(by="Importance", ascending=False)
+                    cat_levels = {}
+                    for col in cat_features:
+                        if col in x_train.columns:
+                            if not pd.api.types.is_categorical_dtype(x_train[col]):
+                                x_train[col] = pd.Categorical(x_train[col])
+                            cat_levels[col] = list(x_train[col].cat.categories)
+                    joblib.dump((all_models, cat_levels), model_path)
+                    print(f'Model saved to {model_path}')                
+                    print('Most important predictors:')
+                    print(importance_df[0:5])        
+                    del all_models
+   
+                # cross-validate
+                # print('Conducting fivefold CV...')
+                # obs_vs_pred=fivefold(common_params, x_train, y_train)
+                # obs_vs_pred.to_csv(outdir+'/'+resp+'_CV(test).csv')
+                # r2 = r2_score(obs_vs_pred['Observed'], obs_vs_pred['Predicted'])
+                # print(f"Overall R²: {r2:.4f}")
+    
             #tiles=tiles[1000:1500]            
-            batch_size = 100
             counter=1
             total_batches = int(len(tiles) / batch_size)
             start_time = time.time()
@@ -558,6 +633,26 @@ for resp in resps['Response']:
                 batch_futures = []
                 batch_start = time.time()
                 for idx, window in enumerate(tiles[i:i+batch_size], start=i):
+                    
+                    try:
+                        out_path = os.path.join(tile_dir, f"tile_{idx}_{resp}.tif")
+                        cutoff_date = datetime.datetime(2025, 6, 10, 9)
+                        mod_time = datetime.datetime.fromtimestamp(os.path.getmtime(out_path))
+                        if mod_time > cutoff_date:
+                            print(f"Skipping tile {idx} (file exists and is recent: {mod_time})")
+                            skip=True
+                        else:
+                            skip=False
+                    except:
+                        skip=False
+                        
+                    if skip == True:
+                        continue
+                    
+                    # if os.path.exists(out_path):
+                    #     print(f"Skipping tile {idx} (already exists)")
+                    #     continue
+
                     future = client.submit(
                         process_tile,
                         idx,
@@ -591,8 +686,6 @@ for resp in resps['Response']:
                       f"| Est. Remaining: {rem_h}h {rem_m}m {rem_s}s")
                 print('')
                 counter+=1
-
-            print('Completed '+resp)
             
         else:
             print('Not enough good data for response: '+resp)      
@@ -636,7 +729,7 @@ for resp in resps['Response']:
             #to overfit a little
             common_params = dict(
                 learning_rate=0.06,
-                n_estimators=50,
+                n_estimators=500,
                 max_depth=40,
                 num_leaves=256,
                 min_child_samples=5,
@@ -714,3 +807,136 @@ for resp in resps['Response']:
             
             print("Grid search completed. Results written to cv_grid_search_results.csv")
 
+#%%
+
+"""
+For predicting on VI data rather than pixels
+
+"""
+
+#df_new=vi.copy()
+
+for resp in resps['Response'][36:]:
+    
+    print('')
+    print(resp)
+    if resp in df.keys():    
+        
+        df4=df.copy()
+        pred_list2=pred_list.copy()
+        
+        pred_list2.append(resp)
+        cv_all=df4[pred_list2]
+        
+        #check nan in cols
+        invalid_counts = df.isna().sum() + (df == -999).sum() + (df == -9999).sum()
+        invalid_percentage = (invalid_counts / len(df)) * 100
+        valid_columns = invalid_percentage[invalid_percentage <= 10].index.intersection(cv_all.columns)
+        cv_all = cv_all[valid_columns]
+                
+        cv_all=cv_all.dropna(axis=0)
+        print('NaN filtered - '+str(len(cv_all)))
+        
+        if resp in cv_all.keys():
+        
+            x_train=cv_all.drop(resp, axis=1)
+            y_train=np.ravel(cv_all[resp].values.reshape(-1, 1))
+            x_train_cols=x_train.columns
+            
+            print('Predictors: ')
+            print(list(x_train.keys()))
+            
+            #to overfit a little
+            common_params = dict(
+                learning_rate=0.06,
+                n_estimators=1000,
+                max_depth=40,
+                num_leaves=256,
+                min_child_samples=5,
+                min_split_gain=0.1,
+                max_bin=512,
+                reg_alpha=0.1,
+                reg_lambda=0.5,
+                feature_fraction=0.9,
+                bagging_fraction=0.8,
+                bagging_freq=5,
+                verbosity=-1,
+                n_jobs=-1
+            )
+                        
+            model_path=outdir_temp+'/'+resp+'_brt-model.joblib'
+            #if os.path.isfile(model_path) == False:
+            #    print('Training model...')
+                
+            param_fn=param_dir+'/'+resp+'_cv_grid_search_results.csv'
+            if os.path.isfile(param_fn):
+                params=pd.read_csv(param_fn)
+                best_params = params.loc[params['r2'].idxmax()]
+                common_params = dict(
+                    learning_rate = best_params['learning_rate'],
+                    n_estimators = 1000,         # Keep as-is for final training
+                    max_depth = int(best_params['max_depth']),
+                    num_leaves = int(best_params['num_leaves']),
+                    min_child_samples = 5,
+                    min_split_gain = 0.1,
+                    max_bin = 512,
+                    reg_alpha = 0.1,
+                    reg_lambda = 0.5,
+                    feature_fraction = 0.9,
+                    bagging_fraction = 0.8,
+                    bagging_freq = 5,
+                    verbosity = -1,
+                    n_jobs = -1
+                )
+                
+                if 'month' in resp:
+                    gbr = lgb.LGBMClassifier(**common_params)
+                else:
+                    #using quantile for future upper and lower confidence estimation
+                    gbr = lgb.LGBMRegressor(objective="regression", alpha=0.5, **common_params)
+                    #gbr = lgb.LGBMRegressor(objective="regeression", **common_params)
+        
+                all_models = gbr.fit(x_train, y_train, categorical_feature=cat_features)
+                #all_models = gbr.fit(x_train, y_train)
+                
+                imp = gbr.feature_importances_
+                importance_df = pd.DataFrame({
+                    'Feature': x_train.columns, 
+                    'Importance': imp
+                    }).sort_values(by="Importance", ascending=False)
+                cat_levels = {}
+                for col in cat_features:
+                    if col in x_train.columns:
+                        if not pd.api.types.is_categorical_dtype(x_train[col]):
+                            x_train[col] = pd.Categorical(x_train[col])
+                        cat_levels[col] = list(x_train[col].cat.categories)
+                joblib.dump((all_models, cat_levels), model_path)
+                print(f'Model saved to {model_path}')                
+                print('Most important predictors:')
+                print(importance_df[0:5])        
+                #del all_models
+            
+            #all_models, cat_levels = joblib.load(model_path)            
+            
+            # Predict on validation points
+            rstack_new = pd.DataFrame(vi, columns=pred_list)
+            rstack_new = rstack_new[list(x_train_cols)]
+            rstack_new = rstack_new.replace(9999, np.nan)
+            all_nan_mask = rstack_new.isna().any(axis=1)
+        
+            for cat in cat_features:
+                if cat in rstack_new.columns:
+                    rstack_new[cat] = rstack_new[cat].astype('category')
+        
+            pred_q = all_models.booster_.predict(rstack_new, num_threads=-1)
+            pred_q[all_nan_mask] = np.nan
+            df_new[resp + '_predicted'] = pred_q
+           
+        else:
+            print('Not enough good data for response: '+resp)      
+    else:
+        print('Not in dataframe')
+
+df_new.to_csv(vi_dir.replace('.csv', '_predictions.csv'))
+
+#%%

@@ -16,10 +16,11 @@ from rasterio.warp import calculate_default_transform, reproject
 
 #local
 wdir='C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\'
-bench_dir=wdir+'scrap\\'
-ext_dir='F:\\veg2_postdoc\\raster_subset_v3\\'
+#bench_dir=wdir+'scripts\\env1\\predict_BRT\\out_tiles\\tiled_250km_mosaic\\'
+bench_dir='E:\\veg2_postdoc\\output\\predict_BRT\\out_tiles\\tiled_250km_mosaic\\'
+ext_dir='E:\\veg2_postdoc\\raster_subset_v3\\'
 resp_csv_path=wdir+'data\\responses_described_v2.csv'
-outdir = 'C:\\Users\\mattg\\Documents\\ANU_HD\\veg2_postdoc\\scrap\\'
+outdir = 'E:\\veg2_postdoc\\output\\mosaic_condition_v1'
 
 #nci
 wdir='/g/data/xc0/project/natint/'
@@ -52,16 +53,16 @@ for resp in resps['Response']:
     print(resp)
     bench_fn=bench_dir+'/'+resp+'_mosaic.tif'
     ext_fn=ext_dir+resp+'.tif'
-    if os.path.isfile(bench_fn):
-        with rio.open(bench_fn) as bench_src:
-            bench=bench_src.read(1)
-            meta=bench_src.meta
-            target_resolution=bench_src.transform[0]
-            
+    if os.path.isfile(bench_fn):        
         out_filename = outdir+'/'+resp
         if os.path.isfile(out_filename+'_loss.tif'):
             print('Out files already exist')
         else:            
+            with rio.open(bench_fn) as bench_src:
+                bench=bench_src.read(1)
+                meta=bench_src.meta
+                target_resolution=bench_src.transform[0]
+            
             with rio.open(ext_fn) as src:
                 ext_transform=src.transform
     
@@ -95,6 +96,9 @@ for resp in resps['Response']:
                 else:
                     loss=bench-ext
                     ploss=loss/bench*100
+                    epsilon = 0.1 * np.nanmedian(bench)
+                    rploss=loss/(bench+epsilon)*100
+                    lrploss=np.log1p(loss)/np.log1p(bench)
                     #ploss[ploss>1000]=np.nan
                     #ploss[ploss<-1000]=np.nan
                     #loss[ploss>1000]=np.nan
@@ -120,6 +124,16 @@ for resp in resps['Response']:
                 with rio.open(ploss_out, "w", **meta) as dest:
                         dest.write(ploss, 1)
                 print('Exported '+ploss_out)
+                
+                # rploss_out=outdir+'/'+resp+'_rploss.tif'
+                # with rio.open(rploss_out, "w", **meta) as dest:
+                #         dest.write(rploss, 1)
+                # print('Exported '+rploss_out)
+                
+                # lrploss_out=outdir+'/'+resp+'_lrploss.tif'
+                # with rio.open(lrploss_out, "w", **meta) as dest:
+                #         dest.write(lrploss, 1)
+                # print('Exported '+lrploss_out)
 
 
 
